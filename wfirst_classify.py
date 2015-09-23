@@ -282,8 +282,8 @@ def wfirst_classification_sequence(
         alreadydone = len(np.where(
             (donesnidlist==int(sn.meta['SNID'])) & (ndet==donendetlist))[0])
         if alreadydone :
-            print('%s already classified with n=%i epochs.  Skipping' %
-                  (sn.meta['HEADFILE'], ndet))
+            print('%s %s already classified with n=%i epochs.  Skipping' %
+                  (sn.meta['HEADFILE'], sn.meta['SNID'], ndet))
             continue
 
         if ndet < ndetepochtot:
