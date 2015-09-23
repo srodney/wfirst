@@ -356,7 +356,8 @@ def do_classify_fulldatfile_list(headfilelist, outfile='',
                                  ndetepochs=['all',7,4,1],
                                  nobj=50, maxiter=2000):
     """
-    :param headfilelist:
+    :param headfilelist: name of a file containing a list of HEAD.FITS files,
+        or an explicit list of headfiles
     :return:
     """
     headfiles = np.loadtxt(headfilelist, dtype=str, unpack=True)
@@ -378,7 +379,9 @@ def main():
     parser.add_argument('headfiles',
                         help='Comma-separated list of file names for '
                              'HEAD.FITS files generated in SNANA sims, '
-                             'with the SNe to classify.')
+                             'with the SNe to classify - OR - a single '
+                             'filename for a text file with a list of '
+                             'HEAD.FITS files, one per line.')
     parser.add_argument('--outfile', type=str, default='',
                         help="Output file for classification results. "
                         "(If unspecified, we use the headfile root with "
@@ -393,7 +396,10 @@ def main():
                         help="Max number of iterations for sncosmo nested "
                              "sampler. (bigger = slower and more accurate)")
     argv = parser.parse_args()
-    headfilelist = argv.headfiles.split(',')
+    if ',' in argv.headfiles:
+        headfilelist = argv.headfiles.split(',')
+    else:
+        headfilelist = argv.headfiles
 
     ndetepochs = argv.ndetepochs.split(',')
     for i in xrange(len(ndetepochs)):
