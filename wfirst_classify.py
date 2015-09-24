@@ -329,7 +329,7 @@ def wfirst_classification_sequence(
     return
 
 def do_classify_fulldatfile(headfile, outfile='',
-                            ndetepochs=['all',7,4,1],
+                            ndetepochs=['all',7,4,2,1],
                             nobj=50, maxiter=2000):
     """ Run classifications on all SN objects in the given .dat file.
     :param datfilename: name of the HEAD.FITS file with the SN data set
@@ -353,7 +353,7 @@ def do_classify_fulldatfile(headfile, outfile='',
     return
 
 def do_classify_fulldatfile_list(headfilelist, outfile='',
-                                 ndetepochs=['all',7,4,1],
+                                 ndetepochs=['all',7,4,2,1],
                                  nobj=50, maxiter=2000):
     """
     :param headfilelist: name of a file containing a list of HEAD.FITS files,
