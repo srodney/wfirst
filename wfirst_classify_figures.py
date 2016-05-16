@@ -23,16 +23,18 @@ def mk_class_fig(datfile, zbins=np.arange(0.01,2.02,0.25), **kwargs):
                            header_start=-1, data_start=0)
 
     icol = 0
-    for ndetrange in [(1,2),(4,5),(7,8),(8,1000)]:
+    ndetrangelist = [(1,2),(4,5),(7,8),(8,1000)]
+    ncol = len(ndetrangelist)
+    for ndetrange in ndetrangelist:
         icol += 1
         if icol == 1 :
-            axtop0 = fig.add_subplot(2, 4, 1)
+            axtop0 = fig.add_subplot(2, ncol, 1)
             axtop = axtop0
-            axbot0 = fig.add_subplot(2, 4, 4+icol, sharex=axtop0, sharey=axtop0)
+            axbot0 = fig.add_subplot(2, ncol, ncol+icol, sharex=axtop0, sharey=axtop0)
             axbot = axbot0
         else :
-            axtop = fig.add_subplot(2, 4, icol, sharex=axtop0, sharey=axtop0)
-            axbot = fig.add_subplot(2, 4, 4+icol, sharex=axtop0, sharey=axtop0)
+            axtop = fig.add_subplot(2, ncol, icol, sharex=axtop0, sharey=axtop0)
+            axbot = fig.add_subplot(2, ncol, ncol+icol, sharex=axtop0, sharey=axtop0)
 
         fcorrect = []
         fcorhigh = []
@@ -89,9 +91,9 @@ def mk_class_fig(datfile, zbins=np.arange(0.01,2.02,0.25), **kwargs):
                 purityhigh.append(np.max(purity_thisbin))
                 puritylow.append(np.min(purity_thisbin))
                 purity_zbinmid.append((zmin+zmax)/2.)
-            else :
-                import pdb; pdb.set_trace()
-                print('missing bin')
+            #else :
+            #    import pdb; pdb.set_trace()
+            #    print('missing bin')
 
         fcor_errhigh = np.array(fcorhigh) - np.array(fcorrect)
         fcor_errlow = np.array(fcorrect) - np.array(fcorlow)
@@ -130,18 +132,19 @@ def mk_multisurvey_fig():
     fig1.clf()
     for survey, zbins, mfc, mec in zip(
             ['Deep','Med','Wide'],
-            [np.arange(0.8,2.51,0.25),np.arange(0.4,0.81,0.2),
-             np.arange(0.01,0.42,0.1)],
+            [np.arange(0.8,2.51,0.25),np.arange(0.3,1.25,0.2),
+             np.arange(0.01,0.62,0.2)],
             [cp.lightred, cp.teal, cp.lightblue],
             [cp.darkred, cp.darkgreen, cp.darkblue]):
         mk_class_fig('%s_class.dat' % survey.lower(), zbins=zbins,
                          mfc=mfc, mec=mec, color=mec, marker='D')
-    ax = pl.gca()
-    txt = ax.text(0.4, 0.85, 'Wide', ha='right', va='top',
+
+    ax = fig1.add_subplot(2,4,1)
+    txt = ax.text(0.4, 0.7, 'Wide', ha='right', va='top',
                   fontsize=15, color=cp.darkblue)
-    txt = ax.text(0.6, 0.85, 'Med', ha='left', va='top',
+    txt = ax.text(0.6, 0.65, 'Med', ha='left', va='top',
                   fontsize=15, color=cp.teal)
-    txt = ax.text(1.5, 0.85, 'Deep', ha='center', va='top',
+    txt = ax.text(1.5, 0.55, 'Deep', ha='center', va='top',
                   fontsize=15, color=cp.darkred)
     pl.savefig(os.path.expanduser("~/Desktop/wfirst_classification_test.pdf"))
 
