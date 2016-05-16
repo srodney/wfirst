@@ -57,6 +57,69 @@ __LOWZLIST__ = ['sn1998bu_CfA', 'sn1999cl_CfA', 'sn1999cl_LCO', 'sn1999cl_LOSS',
                 'sn2011df_CfA', 'sn2011ao_CfA', 'sn2011by_CfA',
                 'snf20080514-002_LOSS', 'snf20080522-000_CfA']
 
+
+class LowzTemplate(object):
+    def __init__(self, sedfile):
+        self.sedfile = sedfile
+        self.header = self.read_sed_template_header()
+        self.phase, self.wave, self.flux = self.read_sed_template_data()
+
+    def read_sed_template_header(self):
+        """ read in metadata from the sed data file header
+        :return:
+        """
+        fin = open(self.sedfile,'r')
+        all_lines = fin.readlines()
+        headerlines = []
+        for hdrline in all_lines:
+            hdrline = hdrline.strip()
+            if len(hdrline)>0 and not hdrline.startswith('#'):
+                break
+            if '=' not in hdrline:
+                continue
+            hdrline = hdrline.strip('#')
+            key = hdrline.split('=')[0]
+            value = hdrline.split('=')[1]
+            if key not in ['name','survey']:
+                value = float(value)
+            self.__dict__[key] = value
+            headerlines.append(hdrline)
+        return headerlines
+
+    def read_sed_template_data(self) :
+        """ read in the phase, wavelength and flux grids from the given SN SED
+        template data file (e.g. from a SALT2 template0.dat file)
+        :rtype: np.ndarray, np.ndarray, np.ndarray
+        :param sedfile:
+        :return phase, wave, flux: phase is a 1D array with each entry giving the
+           rest-frame phase relative to B band max. wave and flux are 2D arrays,
+           each with a 1D array for every day in the phase array.
+        """
+        p,w,f = np.loadtxt( self.sedfile, unpack=True )
+        phaselist = np.unique( p )
+        phasearray = np.array(phaselist)
+        wavearray = np.array([ w[ np.where( p == day ) ] for day in phaselist ])
+        fluxarray = np.array([ f[ np.where( p == day ) ] for day in phaselist ])
+        return phasearray, wavearray, fluxarray
+
+    def plot_sed(self, phase=0, **kwargs):
+        """ plot the SED template data from the given set of data arrays, only at
+        the specified phase.
+        :param phaselist: 1D array giving the list of phases (rel. to B band max)
+        :param wavegrid: 2D array giving the wavelength values at each phase
+        :param fluxgrid: 2D array giving the flux values at each phase
+        :param phase: (int) the rest-frame phase (rel. to B band max) to be plotted
+        :param kwargs: passed on to matplotlib.pyplot.plot()
+        :return:
+        """
+        ithisphase = np.where(np.abs(self.phase-phase)<1)[0]
+        wave = self.wave[ithisphase, :][0]
+        flux = self.flux[ithisphase, :][0]
+        pl.plot(wave, flux, **kwargs)
+        return wave, flux
+
+
+
 def load_models(modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
                 salt2dir='salt2-4', salt2irdir='salt2ir'):
     """
@@ -144,38 +207,7 @@ def plot_template0_data(modeldict=None, phase=0, x1=0, c=0):
     ax.set_ylim(0,0.0005)
 
 
-def get_sed_template_data(sedfile) :
-    """ read in the phase, wavelength and flux grids from the given SN SED
-    template data file (e.g. from a SALT2 template0.dat file)
-    :rtype: np.ndarray, np.ndarray, np.ndarray
-    :param sedfile: 
-    :return phase, wave, flux: phase is a 1D array with each entry giving the
-       rest-frame phase relative to B band max. wave and flux are 2D arrays,
-       each with a 1D array for every day in the phase array.
-    """
-    p,w,f = np.loadtxt( sedfile, unpack=True )
-    phaselist = np.unique( p )
-    phasearray = np.array(phaselist)
-    wavearray = np.array([ w[ np.where( p == day ) ] for day in phaselist ])
-    fluxarray = np.array([ f[ np.where( p == day ) ] for day in phaselist ])
-    return phasearray, wavearray, fluxarray
 
-def plot_sed_template_data(phaselist, wavegrid, fluxgrid,
-                           phase=0, **kwargs):
-    """ plot the SED template data from the given set of data arrays, only at
-    the specified phase.
-    :param phaselist: 1D array giving the list of phases (rel. to B band max)
-    :param wavegrid: 2D array giving the wavelength values at each phase
-    :param fluxgrid: 2D array giving the flux values at each phase
-    :param phase: (int) the rest-frame phase (rel. to B band max) to be plotted
-    :param kwargs: passed on to matplotlib.pyplot.plot()
-    :return:
-    """
-    ithisphase = np.where(np.abs(phaselist-phase)<1)[0]
-    wave = wavegrid[ithisphase, :][0]
-    flux = fluxgrid[ithisphase, :][0]
-    pl.plot(wave, flux, **kwargs)
-    return wave, flux
 
 def extend_template0_ir(modeldict = None,
                         modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
@@ -197,7 +229,11 @@ def extend_template0_ir(modeldict = None,
 
     temp0fileIN = os.path.join( salt2dir, 'salt2_template_0.dat' )
     temp0fileOUT = os.path.join( salt2irdir, 'salt2_template_0.dat' )
+    templatein = LowzTemplate(temp0fileIN)
+
+    # TODO : fix to use the lowztemplate class methods
     temp0phase, temp0wave, temp0flux = get_sed_template_data(temp0fileIN)
+
 
     wavestep = np.median(np.diff(temp0wave[0]))
     waveir = np.arange(wavejoin, wavemax+wavestep, wavestep)
@@ -276,6 +312,7 @@ def extend_template0_ir(modeldict = None,
     fout.close()
 
 def plot_extended_template0():
+    # TODO : update to use the lowztemplate class methods
     pl.clf()
     phasearray, wavearray, fluxarray = get_sed_template_data('salt2ir/salt2_template_0.dat')
     wave, flux = plot_sed_template_data(phasearray, wavearray, fluxarray, phase=0, color='r', ls='-')
@@ -407,6 +444,14 @@ def ccm_unred(wave, flux, ebv, r_v=""):
 
     return funred
 
+def load_metadata(metadatafilename='lowz_metadata.txt'):
+    """read in the low-z SN metadata from the file provided by Arturo"""
+    metadatafile = os.path.join(__THISDIR__, metadatafilename)
+    metadata = ascii.read(metadatafile,
+                          format='commented_header', data_start=0,
+                          header_start=-1)
+    return metadata
+
 
 def deredden_template_sed(sedfile, sedfileout=None, snname=None,
                           metadatafilename='lowz_metadata.txt',
@@ -441,11 +486,8 @@ def deredden_template_sed(sedfile, sedfileout=None, snname=None,
     if not os.path.isfile(sedfile):
         raise exceptions.RuntimeError("No such file %s"% sedfile)
 
-    # read in the low-z SN metadata from the file provided by Arturo
-    metadatafile = os.path.join(__THISDIR__, metadatafilename)
-    metadata = ascii.read(metadatafile,
-                          format='commented_header', data_start=0,
-                          header_start=-1)
+    metadata = load_metadata(metadatafilename)
+
     if snname not in metadata['snname']:
         raise exceptions.RuntimeError(
             'No SN named %s in the metadata file' % snname)
@@ -485,7 +527,8 @@ def deredden_template_sed(sedfile, sedfileout=None, snname=None,
         z = -9
 
     # read in the SED template file directly
-    snphase, snwave, snflux = get_sed_template_data(sedfile)
+    lowzsn = LowzTemplate(sedfile)
+    snphase, snwave, snflux = lowzsn.phase, lowzsn.wave, lowzsn.flux
 
     # Define new arrays to hold the de-reddened template data
     snphaseout, snwaveout, snfluxout = [], [], []
@@ -532,8 +575,12 @@ def deredden_template_sed(sedfile, sedfileout=None, snname=None,
 
 
 def plot_dereddened_template_comparison(sedfile0, sedfile, phase=0):
-    snphase0, snwave0, snflux0 = get_sed_template_data(sedfile0)
-    snphase1, snwave1, snflux1 = get_sed_template_data(sedfile)
+    lowzsn0 = LowzTemplate(sedfile0)
+    lowzsn1 = LowzTemplate(sedfile)
+
+
+    snphase0, snwave0, snflux0 = lowzsn0.phase, lowzsn0.wave, lowzsn0.flux
+    snphase1, snwave1, snflux1 = lowzsn1.phase, lowzsn1.wave, lowzsn1.flux
     salt2mod = sncosmo.Model('salt2')
 
     iphase = np.argmin(np.abs(snphase0-phase))
