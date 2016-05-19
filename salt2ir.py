@@ -5,7 +5,7 @@ import sys
 from astropy.io import ascii
 from astropy.table import Table
 import sncosmo
-from scipy import integrate as scint
+from scipy import integrate as scint, optimize as scopt
 import exceptions
 
 __THISFILE__ = sys.argv[0]
@@ -77,9 +77,9 @@ class LowzTemplate(object):
                 break
             if '=' not in hdrline:
                 continue
-            hdrline = hdrline.strip('#')
-            key = hdrline.split('=')[0]
-            value = hdrline.split('=')[1]
+            hdrline = hdrline.strip('# ')
+            key = hdrline.split('=')[0].strip()
+            value = hdrline.split('=')[1].strip()
             if key not in ['name','survey']:
                 value = float(value)
             self.__dict__[key] = value
@@ -120,9 +120,11 @@ class LowzTemplate(object):
 
 
 
-def load_models(modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
-                salt2dir='salt2-4', salt2irdir='salt2ir'):
+def load_sncosmo_models(modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
+                        salt2dir='salt2-4', salt2irdir='salt2ir'):
     """
+    Load all the lowz template SEDs from sncosmo, along with the original
+    salt2 model and our modified salt2 model that is extrapolated to the NIR.
     :param datadir:
     :return:
     """
@@ -144,15 +146,19 @@ def load_models(modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
     return modeldict
 
 
-def plot_template0_data(modeldict=None, phase=0, x1=0, c=0):
+def plot_template0_data(modeldict=None, phase=0, x1=0, c=0,
+                        deltarange=[-0.2,0.2]):
     """
-    Plot the template0 data with
+    Load all the lowz template SEDs from sncosmo
+
+    Plot the template0 data at the given phase with
+
 
     :param datadir:
     :return:
     """
     if modeldict == None:
-        modeldict = load_models()
+        modeldict = load_sncosmo_models()
 
     salt2mod = modeldict['salt2']
     salt2mod.set(x1=x1, c=c)
@@ -207,6 +213,127 @@ def plot_template0_data(modeldict=None, phase=0, x1=0, c=0):
     ax.set_ylim(0,0.0005)
 
 
+def fit_mlcs_to_salt2_parameter_conversion_functions(
+        fitresfilename='lowz_salt.fitres', showfits=False, verbose=False):
+    """ NOTE: this is a really crude kludge of a solution.
+
+    Get the SALT2 x1,c and MLCS delta, Av values for all SNe for which we have
+    both.  Fit a simple quadratic to each pair of corresponding parameters.
+    :returns x1fitparam, cfitparam: the parameters of the quadratic functions
+     that fit the x1 vs Delta and c vs Av functions.
+    """
+    # read in the low-z SN metadata from the file provided by Arturo
+    metadata = load_metadata()
+    # read in the low-z SN salt2 fit parameters from the file provided by Dan
+    salt2fitfile = os.path.join(__THISDIR__, fitresfilename)
+    salt2fitdata = ascii.read(salt2fitfile,
+                              format='commented_header', data_start=0,
+                              header_start=-1)
+    x1list, x1errlist, clist, cerrlist = [],[],[], []
+    deltalist, deltaerrlist, avlist, averrlist, namelist = [],[],[],[], []
+
+    for snname in metadata['snname']:
+        imeta = np.where(metadata['snname']==snname)[0]
+        snname_stripped = snname.lstrip('sn')
+        delta = float(metadata['Delta'][imeta])
+        deltaerr = float(metadata['dDelta'][imeta])
+        av = float(metadata['Av_mlcs'][imeta])
+        averr = float(metadata['dAv'][imeta])
+        if delta <= -0.5:
+            continue
+        if delta > 1:
+            continue
+
+        if av > 1.8:
+            continue
+
+        if snname_stripped not in salt2fitdata['CID']:
+            if verbose:
+                print "missing %s in salt2 fit data. Skipping" % snname_stripped
+            continue
+
+        isalt2 = np.where(salt2fitdata['CID']==snname_stripped)[0]
+        x1 = np.median(salt2fitdata['x1'][isalt2])
+        x1err = np.median(salt2fitdata['x1ERR'][isalt2])
+        c = np.median(salt2fitdata['c'][isalt2])
+        cerr = np.median(salt2fitdata['cERR'][isalt2])
+        if x1<-3:
+            continue
+
+        x1list.append(x1)
+        x1errlist.append(c)
+        clist.append(c)
+        cerrlist.append(cerr)
+        deltalist.append(delta)
+        deltaerrlist.append(deltaerr)
+        avlist.append(av)
+        averrlist.append(averr)
+        namelist.append(snname)
+
+    x1 = np.array(x1list)
+    x1err = np.array(x1errlist)
+    c = np.array(clist)
+    cerr = np.array(cerrlist)
+    delta = np.array(deltalist)
+    deltaerr = np.array(deltaerrlist)
+    av = np.array(avlist)
+    averr = np.array(averrlist)
+
+    # TODO : switch to using scipy.odr for fitting with errors in both
+    #  dimensions.
+    x1fit = scopt.curve_fit(quadratic, delta, x1,
+                            p0=None, sigma=x1err,
+                            absolute_sigma=True,
+                            check_finite=True, )
+    x1fitparam = x1fit[0]
+    x1fitcov = np.sqrt(np.diag(x1fit[1]))
+
+    cfit = scopt.curve_fit(quadratic, av, c,
+                           p0=None, sigma=cerr,
+                           absolute_sigma=True,
+                           check_finite=True, )
+    cfitparam = cfit[0]
+    cfitcov = np.sqrt(np.diag(cfit[1]))
+
+    if showfits:
+        fig = pl.gcf()
+        fig.clf()
+        ax1 = fig.add_subplot(2,1,1)
+        pl.errorbar(deltalist, x1list, x1errlist, deltaerrlist, marker='o',
+                    color='k', ls=' ')
+        ax = pl.gca()
+        ax.set_xlabel('MLCS $\Delta$')
+        ax.set_ylabel('SALT2 x$_1$')
+
+        ax2 = fig.add_subplot(2,1,2)
+        pl.errorbar(avlist, clist, cerrlist, averrlist, marker='d', color='g',
+                    ls=' ')
+        ax = pl.gca()
+        ax.set_xlabel('MLCS $A_V$')
+        ax.set_ylabel('SALT2 c')
+
+        deltarange = np.arange(-0.4, 1.0, 0.01)
+        ax1.plot( deltarange,
+                  quadratic(deltarange, x1fitparam[0],
+                            x1fitparam[1], x1fitparam[2]),
+                  ls='-', color='r', marker=' ')
+
+
+        avrange = np.arange(-0.1, 1.9, 0.01)
+        ax2.plot( avrange,
+                  quadratic(avrange, cfitparam[0],  cfitparam[1], cfitparam[2]),
+                  ls='-', color='r', marker=' ')
+
+        ax2.set_xlim(-0.1, 1.9)
+        pl.draw()
+    return x1fitparam, cfitparam
+
+
+def quadratic(x, A, B, C):
+    return A + B * x + C * x * x
+
+def cubic(x, A, B, C, D):
+    return A + B * x + C * x * x + D * x * x * x
 
 
 def extend_template0_ir(modeldict = None,
@@ -636,4 +763,12 @@ def deredden_all_templates(showfig=True, savefig=True, clobber=False):
         if savefig:
             figfilename = 'lowzIa/%s.png' % sedfilename.split('.')[0]
             pl.savefig(figfilename)
+
+def load_all_templates():
+    templatedict = {}
+    for snname in __LOWZLIST__:
+        sedfile = os.path.join('lowzIa', snname) + '.dat'
+        templatedict[snname] = LowzTemplate(sedfile=sedfile)
+
+    return templatedict
 
