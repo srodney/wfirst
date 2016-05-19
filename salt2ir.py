@@ -176,7 +176,6 @@ def plot_template0_data(modeldict=None, phase=0, x1=0, c=0,
         lowzsn = modeldict[name.lower()]
         fluxlowz = lowzsn.flux(phase, wavelowz)
         iwavemax = np.where(wavelowz>=np.max(wave0))[0][0]
-        # import pdb; pdb.set_trace()
         fluxlowz_norm = scint.trapz(fluxlowz[:iwavemax], wavelowz[:iwavemax])
         pl.plot(wavelowz, fluxlowz/fluxlowz_norm,
                 'b-', alpha=0.1, lw=2 )
@@ -213,14 +212,14 @@ def plot_template0_data(modeldict=None, phase=0, x1=0, c=0,
     ax.set_ylim(0,0.0005)
 
 
-def fit_mlcs_to_salt2_parameter_conversion_functions(
-        fitresfilename='lowz_salt.fitres', showfits=False, verbose=False):
+def get_mlcs_to_salt2_parameter_conversion_functions(
+        fitresfilename='lowz_salt2.fitres', showfits=False, verbose=False):
     """ NOTE: this is a really crude kludge of a solution.
 
     Get the SALT2 x1,c and MLCS delta, Av values for all SNe for which we have
     both.  Fit a simple quadratic to each pair of corresponding parameters.
-    :returns x1fitparam, cfitparam: the parameters of the quadratic functions
-     that fit the x1 vs Delta and c vs Av functions.
+    :returns delta2x1, av2c: functions that convert from the MLCS parameter
+        delta or Av to the SALT2 parameter x1 or c, respectively.
     """
     # read in the low-z SN metadata from the file provided by Arturo
     metadata = load_metadata()
@@ -326,7 +325,14 @@ def fit_mlcs_to_salt2_parameter_conversion_functions(
 
         ax2.set_xlim(-0.1, 1.9)
         pl.draw()
-    return x1fitparam, cfitparam
+
+    def mlcsdelta_to_salt2x1(delta):
+        return quadratic(delta, x1fitparam[0], x1fitparam[1], x1fitparam[2])
+
+    def mlcsav_to_salt2c(c):
+        return quadratic(c, cfitparam[0], cfitparam[1], cfitparam[2])
+
+    return mlcsdelta_to_salt2x1, mlcsav_to_salt2c
 
 
 def quadratic(x, A, B, C):
@@ -402,8 +408,6 @@ def extend_template0_ir(modeldict = None,
             #    lowzsn.flux(thisphase, wave0), wave0)
 
             normalization_factor = (fluxjoin / fluxlowz[0])
-            #if thisphase == 0:
-            #    import pdb; pdb.set_trace()
             fluxlowzarray.append(fluxlowz * normalization_factor)
 
         fluxlowzarray = np.array(fluxlowzarray)
@@ -425,8 +429,6 @@ def extend_template0_ir(modeldict = None,
         wavenew = np.append(wave0[:ijoin0], waveir.tolist())
         fluxnew = np.append(flux0[:ijoin0],
                             (scalefactor*fluxlowzmedian))
-        #if thisphase == 0:
-        #    import pdb; pdb.set_trace()
 
         # append to the list of output data lines
         for j in range( len(phasenew) ) :
@@ -621,14 +623,18 @@ def deredden_template_sed(sedfile, sedfileout=None, snname=None,
     imeta = np.where(metadata['snname']==snname)[0]
     zhelio = metadata['z_helio'][imeta]
     zcmb = metadata['z_cmb'][imeta]
-    zcmb = metadata['z_cmb'][imeta]
     EBVmw = metadata['E(B-V)'][imeta]
     Rvmw = 3.1
-    Avhost = metadata['Av_mlcs'][imeta]
     Rvhost = metadata['Rv_mlcs'][imeta]
     Avhost = metadata['Av_mlcs'][imeta]
-    EBVhost = Avhost / Rvhost
     Delta_mlcs = metadata['Delta'][imeta]
+    if Delta_mlcs==-999:
+        Delta_mlcs=0
+    if Avhost==-999:
+        Avhost= 0
+    if Rvhost==-999:
+        Rvhost= 3.1
+    EBVhost = Avhost / Rvhost
 
     #TODO: convert from Delta_mlcs to SALT2 x1
 
@@ -648,10 +654,12 @@ def deredden_template_sed(sedfile, sedfileout=None, snname=None,
             print("Note significant difference in redshift for %s" % snname +
                   " \\n zhelio = %.5f    zsalt2= %.5f" % (zhelio, zsalt2))
     else:
-        x1 = -9
-        c = -9
-        zHD = -9
-        z = -9
+        delta2x1, av2c = get_mlcs_to_salt2_parameter_conversion_functions(
+            fitresfilename=fitresfilename)
+        x1 = delta2x1(Delta_mlcs)
+        c = av2c(Avhost)
+        zHD = zcmb
+        z = zhelio
 
     # read in the SED template file directly
     lowzsn = LowzTemplate(sedfile)
@@ -686,11 +694,9 @@ def deredden_template_sed(sedfile, sedfileout=None, snname=None,
         snphaseout.append(phase)
         snwaveout.append(snwave1)
         snfluxout.append(snflux2)
-
         if sedfileout is not None:
             for w,f in zip(snwave1, snflux2):
                 print >> fout, '%25.18e %25.18e %25.18e' % (phase, w, f)
-
     if sedfileout is not None:
         fout.close()
 
@@ -705,7 +711,6 @@ def plot_dereddened_template_comparison(sedfile0, sedfile, phase=0):
     lowzsn0 = LowzTemplate(sedfile0)
     lowzsn1 = LowzTemplate(sedfile)
 
-
     snphase0, snwave0, snflux0 = lowzsn0.phase, lowzsn0.wave, lowzsn0.flux
     snphase1, snwave1, snflux1 = lowzsn1.phase, lowzsn1.wave, lowzsn1.flux
     salt2mod = sncosmo.Model('salt2')
@@ -713,12 +718,18 @@ def plot_dereddened_template_comparison(sedfile0, sedfile, phase=0):
     iphase = np.argmin(np.abs(snphase0-phase))
     bestphase0 = snphase0[iphase]
 
+    minwave = 3500
     salt2wave = np.arange(salt2mod.minwave(),salt2mod.maxwave(),10)
+    if minwave <= np.min(salt2wave):
+        iwavemin = 0
+    else:
+        iwavemin = np.where(salt2wave <= minwave)[0][-1]
+
     salt2flux = salt2mod.flux(bestphase0, salt2wave)
-    salt2flux_norm = scint.trapz(salt2flux, salt2wave)
+    salt2flux_norm = scint.trapz(salt2flux[iwavemin:], salt2wave[iwavemin:])
+
     pl.plot(salt2wave, salt2flux/salt2flux_norm, 'k--', lw=1,
             label='SALT2-4 template0' )
-    minwave = np.min(salt2wave)
 
     for snphase, snwave, snflux, color, label in zip(
             [snphase0,snphase1],[snwave0,snwave1],[snflux0,snflux1],
@@ -737,13 +748,17 @@ def plot_dereddened_template_comparison(sedfile0, sedfile, phase=0):
     ax = pl.gca()
     ax.set_xlabel('Wavelength ($\AA$)')
     ax.set_xlim(2000, 16000)
+    ax.set_ylim(-0.00005, 0.00058)
+
     snid = os.path.basename(sedfile0).split('_')[0].lstrip('sn')
     ax.text(8500, 0.00015, 'SN ' + snid, fontsize='large')
     pl.draw()
 
-def deredden_all_templates(showfig=True, savefig=True, clobber=False):
+def deredden_template_list(sedfilelist=None,
+        showfig=True, savefig=True, clobber=False):
     import glob
-    sedfilelist = glob.glob('lowzIaObsFrame/sn*_*.dat')
+    if sedfilelist is None:
+        sedfilelist = glob.glob('lowzIaObsFrame/sn*_*.dat')
     for sedfile0 in sedfilelist:
         sedfilename = os.path.basename(sedfile0)
         snname = sedfilename.split('_')[0]
