@@ -118,6 +118,31 @@ class TimeSeriesGrid(object):
         return wave, flux
 
 
+    def extrapolate_flatline(self, outfilename,
+                             maxwave=25000, showplots=False):
+        """ use a super-crude flatline extension of the value array
+        to extrapolate this model component to the IR at all phases """
+        outlines = []
+        for iphase in range(len(self.phase)):
+            thisphase = self.phase[iphase]
+            w = self.wave[iphase]
+            v = self.value[iphase]
+            wavestep = w[1] - w[0]
+
+            # redward flatline extrapolation from last point
+            wavenew = np.arange(w[0], maxwave, wavestep)
+            valnew = np.append(v, np.zeros(len(wavenew)-len(w)) + v[-1])
+
+            # append to the list of output data lines
+            for j in range(len(wavenew)):
+                outlines.append("%6.2f    %12i  %12.7e\n" % (
+                    thisphase, wavenew[j], valnew[j]))
+
+        # write it out to the new .dat file
+        fout = open(outfilename, 'w')
+        fout.writelines(outlines)
+        fout.close()
+        return
 
 def load_sncosmo_models(modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
                         salt2subdir='salt2-4', salt2irsubdir='salt2ir',
@@ -785,7 +810,6 @@ def extend_template0_ir(modeldict = None, x1min=-1, x1max=1,
     fout.close()
 
 def plot_extended_template0():
-    # TODO : update to use the lowztemplate class methods
     pl.clf()
     newtemp0 = TimeSeriesGrid('salt2ir/salt2_template_0.dat')
     for phase, color in zip([-15,-5,0,5,25],['m','b','g','r','k']):
@@ -797,11 +821,12 @@ def plot_extended_template0():
 
 
 def extend_template1_ir(modeldict = None, cmin=-0.1, cmax=0.3,
+                        x1min=-1, x1max=1,
                         modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
                         salt2dir = 'salt2-4',
                         salt2irdir = 'salt2ir',
-                        wavejoin = 8500, wavemax = 18000,
-                        showplots=False):
+                        wavejoinstart = 8500, wavemax = 25000,
+                        showphase0plots=False):
     """ extend the M1 component of the SALT2 model into the IR.  (this is the
     component that is multiplied by the SALT2 parameter x1, and therefore
     reflects changes in the shape of the light curve.
@@ -810,9 +835,9 @@ def extend_template1_ir(modeldict = None, cmin=-0.1, cmax=0.3,
     :param modeldir:
     :param salt2dir:
     :param salt2irdir:
-    :param wavejoin:
+    :param wavejoinstart:
     :param wavemax:
-    :param showplots:
+    :param showphase0plots:
     :return:
     """
     if modeldict == None:
@@ -820,40 +845,67 @@ def extend_template1_ir(modeldict = None, cmin=-0.1, cmax=0.3,
     salt2dir = os.path.join(modeldir, salt2dir)
     salt2irdir = os.path.join(modeldir, salt2irdir)
 
+    # read in the extended template0 data (i.e. the M0 model
+    # component that has already been extended to IR wavelengths
     temp0extfile = os.path.join( salt2irdir, 'salt2_template_0.dat' )
     temp0ext = TimeSeriesGrid(temp0extfile)
 
     temp1fileIN = os.path.join( salt2dir, 'salt2_template_1.dat' )
-    temp1fileOUT = os.path.join( salt2irdir, 'salt2_template_1.dat' )
     temp1 = TimeSeriesGrid(temp1fileIN)
-    wavestep = np.median(np.diff(temp1.wave[0]))
 
-    waveopt = np.arange(4000, 8000, wavestep)
-    waveir = np.arange(wavejoin, wavemax+wavestep, wavestep)
+    temp1fileOUT = os.path.join( salt2irdir, 'salt2_template_1.dat' )
+    outlines = []
 
-    phaselist = [-5,0,5]
-    iphaselist = [np.argmin(np.abs(temp1.phase-phaselist[j]))
-                  for j in range(len(phaselist))]
-    iax=0
+    # define wavelength arrays. The same wavelength arrays are used
+    # for every phase
+    wavelist_old = temp1.wave[0]
+    wavestep = wavelist_old[1] - wavelist_old[0]
+    wavemin = wavelist_old[0]
+    wavejoinend = wavelist_old[-1]
+    wavelist_join = np.arange(wavejoinstart, wavejoinend+wavestep, wavestep)
+    wavelist_opt = np.arange(4000, 8000, wavestep)
+    wavelist_ir = np.arange(wavejoinstart, wavemax, wavestep)
+    wavelist_all = np.arange(wavemin, wavemax, wavestep)
 
-    # for iphase1 in range(len(temp1.phase)): # iphaselist:
-    for iphase1 in iphaselist:
-        iax+=1
+    # indices to pick out the join sections for the Old and new M1 models
+    ijoinold = np.where((wavelist_old >= wavejoinstart) &
+                        (wavelist_old <= wavejoinend))[0]
+    ijoinnew = np.where((wavelist_ir >= wavejoinstart) &
+                        (wavelist_ir <= wavejoinend))[0]
+
+    assert (np.all(wavelist_all==temp0ext.wave[0]),
+            "New M1 wavelength array must match extended M0"
+            " wavelength array exactly.")
+
+    assert (np.all(wavelist_all == np.append(wavelist_old, wavelist_ir)),
+            "New M1 wavelength array must match the join of old (optical)"
+            " and new (IR) wavelength arrays exactly.")
+
+    # define weight functions to be applied when combining the new
+    #  M1 curve with the old M1 curve.  It increases linearly from 0
+    # at the start of the join window (8500 A) to 1 at the end of
+    # the join window (9200 A), which is the last wavelength for the
+    # old optical SALT2 model
+    whtslope = 1.0 / (wavejoinend - wavejoinstart)
+    whtintercept = -whtslope * wavejoinstart
+    newM1weight = whtslope * wavelist_join + whtintercept
+    oldM1weight = 1 - newM1weight
+
+    for iphase1 in range(len(temp1.phase)): # iphaselist:
         thisphase = temp1.phase[iphase1]
 
         # get the SALT2 template0 and template1 data for this day
         # and define interpolating functions
         iphase0 = np.argmin(np.abs(temp0ext.phase-thisphase))
-        M0 = scinterp.interp1d(temp0ext.wave[iphase0], temp0ext.value[iphase0],
-                               bounds_error=False, fill_value=0)
+        assert iphase0 == iphase1
 
-        M1 = scinterp.interp1d(temp1.wave[iphase1], temp1.value[iphase1],
-                               bounds_error=False, fill_value=0)
+        M0func = scinterp.interp1d(
+            temp0ext.wave[iphase0], temp0ext.value[iphase0],
+            bounds_error=False, fill_value=0)
+        M1func = scinterp.interp1d(
+            temp1.wave[iphase1], temp1.value[iphase1],
+            bounds_error=False, fill_value=0)
 
-
-        # ijoin = np.argmin(np.abs(wave1-wavejoin))
-        # M1join = M1[ijoin]
-        # iopt = np.where((np.abs(M0*M1)>0) & (4000<wave0ext) & (wave0ext<8000))[0]
         print( 'solving for IR tail of template_1 for day : %i'%thisphase )
 
         M1extlist = []
@@ -864,61 +916,148 @@ def extend_template1_ir(modeldict = None, cmin=-0.1, cmax=0.3,
             if lowzsn.maxtime()<thisphase: continue
             if lowzsn.salt2c<cmin: continue
             if lowzsn.salt2c>cmax: continue
+            if lowzsn.salt2x1<x1min: continue
+            if lowzsn.salt2x1>x1max: continue
 
-            fluxlowz_opt = lowzsn.flux(thisphase, waveopt)
+            fluxlowz_opt = lowzsn.flux(thisphase, wavelist_opt)
             if np.sum(fluxlowz_opt)==0: continue
 
-            # solve for x0 as a function of lambda (should be ~constant!)
-            # over optical wavelengths
-            # Define a scalar x0 as the median value over the
-            # 4000-8000 angstrom range
+            # Solve for x0 as a function of lambda (should be ~constant!)
+            # over optical wavelengths. Then define a scalar x0 as the
+            # median value over the  4000-8000 angstrom range
             x0 = np.median((fluxlowz_opt /
-                            (M0(waveopt) + lowzsn.salt2x1 * M1(waveopt))))
+                            (M0func(wavelist_opt) +
+                             lowzsn.salt2x1 * M1func(wavelist_opt))))
 
             # solve for the M1 array over the NIR wavelength range (8500+ A)
-            fluxlowz_ir = lowzsn.flux(thisphase, waveir)
-            M1ext = (1/lowzsn.salt2x1) * ((fluxlowz_ir/x0) - M0(waveir))
+            fluxlowz_ir = lowzsn.flux(thisphase, wavelist_ir)
+            M1ext = (1/lowzsn.salt2x1) * ((fluxlowz_ir/x0) - M0func(wavelist_ir))
             M1extlist.append(M1ext)
 
-        if thisphase==0:
+        if len(M1extlist)<3:
+            print("only %i templates for phase = %.1f." % (
+                len(M1extlist), thisphase))
+            print("Using M1(lambda)=0 for all IR wavelengths")
+            newM1median = np.zeros(len(wavelist_all))
+        else:
+            newM1median = np.median(M1extlist, axis=0)
+
+        # apply the predefined weight functions to combine the new M1
+        # curve with the old M1 curve in the "join window"
+        # and then stitch together the old M1 curve up to the join
+        # wavelength, the joining curve through the join window, and the
+        # new M1 curve beyond that into the IR wavelengths.
+        newM1joinvalues = (oldM1weight * temp1.value[iphase1][ijoinold] +
+                           newM1weight * newM1median[ijoinnew])
+        newM1values = np.append(
+            np.append(temp1.value[iphase1][:ijoinold[0]], newM1joinvalues),
+            newM1median[ijoinnew[-1]+1:])
+
+        if showphase0plots and thisphase==0:
             fig1 = pl.figure(1)
             fig1.clf()
             ax1 = fig1.gca()
             for M1ext in M1extlist:
-                ax1.plot(waveir, M1ext, lw=2, alpha=0.3, color='c')
-
-            ax1.plot(waveir, np.median(M1extlist, axis=0), lw=2, color='k')
-            waveuvopt = np.arange(2000, 00, 10)
-            ax1.plot(temp1.wave[0], M1(temp1.wave[0]), color='r', lw=2)
-            import pdb; pdb.set_trace()
-        """
-        if len(M1nirlist)<5:
-            print("only %i templates for phase = %.1f. Using Hsiao model" % (
-                len(M1nirlist), thisphase))
-            fluxlowzmedian = modeldict['hsiao'].flux(thisphase, waveir)
-        else:
-            fluxlowzarray = np.array(fluxlowzarray)
-            fluxlowzmedian = np.median(fluxlowzarray, axis=0)
-
-        # extend the template0 SED into the IR for this phase
-        # using the median of all the lowz templates
-        ijoin0 = np.argmin(abs(wave0ext - wavejoin))
-        ijoinlowz = np.argmin(abs(waveir - wavejoin))
-
-        if flux0[ijoin0]>0:
-            scalefactor = fluxlowzmedian[ijoinlowz]/flux0[ijoin0]
-        else:
-            scalefactor = 1
-        wavenew = np.append(wave0ext[:ijoin0], waveir.tolist())
-        fluxnew = np.append(flux0[:ijoin0], (scalefactor*fluxlowzmedian))
+                ax1.plot(wavelist_ir, M1ext, lw=2, alpha=0.3, color='c')
+            ax1.plot(wavelist_ir, newM1median, lw=2.5, color='0.5')
+            ax1.plot(wavelist_all, newM1values, lw=1, color='k')
+            ax1.plot(temp1.wave[0], M1func(temp1.wave[0]), color='r', lw=2.5)
 
         # append to the list of output data lines
-        for j in range( len(wavenew) ) :
+        for j in range(len(wavelist_all)) :
             outlines.append( "%6.2f    %12i  %12.7e\n"%(
-                    thisphase, wavenew[j], fluxnew[j] ) )
+                    thisphase, wavelist_all[j], newM1values[j] ) )
 
     # write it out to the new template sed .dat file
     fout = open( temp1fileOUT, 'w' )
     fout.writelines( outlines )
     fout.close()
+
+
+def plot_extended_template1(phaselist=[-15,-5,0,5,25]):
+    fig = pl.gcf()
+    fig.clf()
+    oldtemp1 = TimeSeriesGrid('salt2-4/salt2_template_1.dat')
+    newtemp1 = TimeSeriesGrid('salt2ir/salt2_template_1.dat')
+    iax = 0
+    for phase in phaselist:
+        iax+=1
+        ax = fig.add_subplot(len(phaselist),1,iax)
+        oldtemp1.plot_at_phase(phase=phase, color='0.5', ls='-', lw=2.5,
+                               label='SALT2-4')
+        newtemp1.plot_at_phase(phase=phase, color='m', ls='-', lw=1,
+                               label='SALT2-IR')
+        ax.text(0.5,0.9, 'phase = % i'%int(phase), ha='left', va='top',
+                fontsize='large', transform=ax.transAxes)
+        if iax==1:
+            pl.legend(loc='upper right')
+        if iax<len(phaselist):
+            pl.setp(ax.get_xticklabels(), visible=False)
+        else:
+            ax.set_xlabel('Wavelength ($\AA$)')
+        if iax==int((len(phaselist)+1)/2.):
+            ax.set_ylabel('SALT2 M1 model component value')
+    fig.subplots_adjust(hspace=0, left=0.1, bottom=0.12, right=0.95)
+    pl.draw()
+
+
+
+
+def extendSALT2_flatline(
+        modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
+        salt2subdir='salt2-4', salt2irsubdir='salt2ir',
+        showplots = False):
+    """ extrapolate the *lc* and *spec* .dat files for SALT2
+     using a flatline extension of the red tail to 2.5 microns
+     """
+    salt2modeldir = os.path.join(modeldir, salt2subdir)
+    salt2irmodeldir = os.path.join(modeldir, salt2irsubdir)
+
+    filelist = ['salt2_lc_dispersion_scaling.dat',
+                'salt2_lc_relative_covariance_01.dat',
+                'salt2_lc_relative_variance_0.dat',
+                'salt2_lc_relative_variance_1.dat',
+                'salt2_spec_covariance_01.dat',
+                'salt2_spec_variance_0.dat',
+                'salt2_spec_variance_1.dat']
+
+    if showplots:
+        fig = pl.gcf()
+        fig.clf()
+        iax=0
+
+    for filename in filelist:
+        infile = os.path.join(salt2modeldir, filename)
+        outfile = os.path.join(salt2irmodeldir, filename)
+        timeseries = TimeSeriesGrid(infile)
+        if showplots:
+            iax+=1
+            ax = fig.add_subplot(7,1,iax)
+            timeseries.plot_at_phase(0, color='k', lw=2.5, ls='-', marker=' ')
+        timeseries.extrapolate_flatline(outfilename=outfile,
+                                        maxwave=25000, showplots=False)
+        if showplots:
+            timeseriesNew = TimeSeriesGrid(outfile)
+            timeseriesNew.plot_at_phase(0, color='r', lw=1,
+                                        ls='--', marker=' ')
+            ax.text(0.95, 0.05, filename, transform=ax.transAxes,
+                    fontsize='large', ha='right', va='bottom')
+
+    outinfo = os.path.join(salt2irmodeldir, 'SALT2.INFO')
+    fout = open(outinfo, 'w')
+    print >> fout, """
+# open rest-lambda range WAAAY beyond nominal 2900-7000 A range.
+RESTLAMBDA_RANGE:  2000. 25000.
+COLORLAW_VERSION: 1
+COLORCOR_PARAMS: 2800 7000 4 -0.537186 0.894515 -0.513865 0.0891927
+COLOR_OFFSET:  0.0
+
+MAG_OFFSET: 0.27
+SEDFLUX_INTERP_OPT: 1  # 1=>linear,    2=>spline
+ERRMAP_INTERP_OPT:  1  # 0=snake off;  1=>linear  2=>spline
+ERRMAP_KCOR_OPT:    1  # 1/0 => on/off
+
+MAGERR_FLOOR:   0.005            # don;t allow smaller error than this
+MAGERR_LAMOBS:  0.1  2000  4000  # magerr minlam maxlam
+MAGERR_LAMREST: 0.1   100   200  # magerr minlam maxlam
 """
