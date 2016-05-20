@@ -5,7 +5,7 @@ import sys
 from astropy.io import ascii
 from astropy.table import Table
 import sncosmo
-from scipy import integrate as scint, optimize as scopt
+from scipy import integrate as scint, interpolate as scinterp, optimize as scopt
 import exceptions
 
 __THISFILE__ = sys.argv[0]
@@ -58,23 +58,24 @@ __LOWZLIST__ = ['sn1998bu_CfA', 'sn1999cl_CfA', 'sn1999cl_LCO', 'sn1999cl_LOSS',
                 'snf20080514-002_LOSS', 'snf20080522-000_CfA']
 
 
-class LowzTemplate(object):
+class TimeSeriesGrid(object):
     def __init__(self, sedfile):
         self.sedfile = sedfile
-        self.header = self.read_sed_template_header()
-        self.phase, self.wave, self.flux = self.read_sed_template_data()
 
-    def read_sed_template_header(self):
+        fin = open(self.sedfile,'r')
+        all_lines = fin.readlines()
+        self.headerlines = np.array([line for line in all_lines
+                                     if len(line.strip()) > 0 and
+                                     line.lstrip().startswith('#')])
+        self.parse_lowz_template_header()
+        self.phase, self.wave, self.value = self.read_timeseriesgrid_data()
+
+    def parse_lowz_template_header(self):
         """ read in metadata from the sed data file header
         :return:
         """
-        fin = open(self.sedfile,'r')
-        all_lines = fin.readlines()
-        headerlines = []
-        for hdrline in all_lines:
+        for hdrline in self.headerlines:
             hdrline = hdrline.strip()
-            if len(hdrline)>0 and not hdrline.startswith('#'):
-                break
             if '=' not in hdrline:
                 continue
             hdrline = hdrline.strip('# ')
@@ -83,10 +84,8 @@ class LowzTemplate(object):
             if key not in ['name','survey']:
                 value = float(value)
             self.__dict__[key] = value
-            headerlines.append(hdrline)
-        return headerlines
 
-    def read_sed_template_data(self) :
+    def read_timeseriesgrid_data(self) :
         """ read in the phase, wavelength and flux grids from the given SN SED
         template data file (e.g. from a SALT2 template0.dat file)
         :rtype: np.ndarray, np.ndarray, np.ndarray
@@ -102,7 +101,7 @@ class LowzTemplate(object):
         fluxarray = np.array([ f[ np.where( p == day ) ] for day in phaselist ])
         return phasearray, wavearray, fluxarray
 
-    def plot_sed(self, phase=0, **kwargs):
+    def plot_at_phase(self, phase=0, **kwargs):
         """ plot the SED template data from the given set of data arrays, only at
         the specified phase.
         :param phaselist: 1D array giving the list of phases (rel. to B band max)
@@ -114,7 +113,7 @@ class LowzTemplate(object):
         """
         ithisphase = np.where(np.abs(self.phase-phase)<1)[0]
         wave = self.wave[ithisphase, :][0]
-        flux = self.flux[ithisphase, :][0]
+        flux = self.value[ithisphase, :][0]
         pl.plot(wave, flux, **kwargs)
         return wave, flux
 
@@ -169,13 +168,11 @@ def load_sncosmo_models(modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
     return modeldict
 
 
-def plot_template0_data(modeldict=None, phase=0, x1=0, c=0,
-                        deltarange=[-0.2,0.2]):
+def plot_template0_data(modeldict=None, phase=0, x1=0, c=0):
     """
     Load all the lowz template SEDs from sncosmo
 
     Plot the template0 data at the given phase with
-
 
     :param datadir:
     :return:
@@ -574,8 +571,8 @@ def deredden_template_sed(sedfile, sedfileout=None, snname=None,
         z = zhelio
 
     # read in the SED template file directly
-    lowzsn = LowzTemplate(sedfile)
-    snphase, snwave, snflux = lowzsn.phase, lowzsn.wave, lowzsn.flux
+    lowzsn = TimeSeriesGrid(sedfile)
+    snphase, snwave, snflux = lowzsn.phase, lowzsn.wave, lowzsn.value
 
     # Define new arrays to hold the de-reddened template data
     snphaseout, snwaveout, snfluxout = [], [], []
@@ -620,11 +617,11 @@ def deredden_template_sed(sedfile, sedfileout=None, snname=None,
 
 
 def plot_dereddened_template_comparison(sedfile0, sedfile, phase=0):
-    lowzsn0 = LowzTemplate(sedfile0)
-    lowzsn1 = LowzTemplate(sedfile)
+    lowzsn0 = TimeSeriesGrid(sedfile0)
+    lowzsn1 = TimeSeriesGrid(sedfile)
 
-    snphase0, snwave0, snflux0 = lowzsn0.phase, lowzsn0.wave, lowzsn0.flux
-    snphase1, snwave1, snflux1 = lowzsn1.phase, lowzsn1.wave, lowzsn1.flux
+    snphase0, snwave0, snflux0 = lowzsn0.phase, lowzsn0.wave, lowzsn0.value
+    snphase1, snwave1, snflux1 = lowzsn1.phase, lowzsn1.wave, lowzsn1.value
     salt2mod = sncosmo.Model('salt2')
 
     iphase = np.argmin(np.abs(snphase0-phase))
@@ -695,7 +692,7 @@ def load_all_templates():
     templatedict = {}
     for snname in __LOWZLIST__:
         sedfile = os.path.join('lowzIa', snname) + '.dat'
-        templatedict[snname] = LowzTemplate(sedfile=sedfile)
+        templatedict[snname] = TimeSeriesGrid(sedfile=sedfile)
 
     return templatedict
 
@@ -705,7 +702,7 @@ def extend_template0_ir(modeldict = None, x1min=-1, x1max=1,
                         modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
                         salt2dir = 'salt2-4',
                         salt2irdir = 'salt2ir',
-                        wavejoin = 8500, wavemax = 18000,
+                        wavejoin = 8500, wavemax = 24990,
                         showplots=False):
     """ extend the salt2 Template_0 model component
     by adopting the IR tails from a collection of SN Ia template SEDs.
@@ -721,23 +718,16 @@ def extend_template0_ir(modeldict = None, x1min=-1, x1max=1,
 
     temp0fileIN = os.path.join( salt2dir, 'salt2_template_0.dat' )
     temp0fileOUT = os.path.join( salt2irdir, 'salt2_template_0.dat' )
-    temp0 = LowzTemplate(temp0fileIN)
+    temp0 = TimeSeriesGrid(temp0fileIN)
     wavestep = np.median(np.diff(temp0.wave[0]))
     waveir = np.arange(wavejoin, wavemax+wavestep, wavestep)
 
-    # salt2mod = modeldict['salt2']
-    # build up modified template0 data from day -20 to +50
-    # fscale = []
     outlines = []
-    phaselist = [-10,-5,0,5,10]
-    iphaselist = [np.argmin(np.abs(temp0.phase-phaselist[j]))
-                  for j in range(len(phaselist))]
-
     for iphase in range(len(temp0.phase)): # iphaselist:
         # get the SALT2 template0 SED for this day
         # phase0 = temp0.phase[iphase]
         wave0 = temp0.wave[iphase]
-        flux0 = temp0.flux[iphase]
+        flux0 = temp0.value[iphase]
         thisphase = temp0.phase[iphase]
 
         ijoin = np.argmin(np.abs(wave0-wavejoin))
@@ -763,9 +753,9 @@ def extend_template0_ir(modeldict = None, x1min=-1, x1max=1,
             normalization_factor = (fluxjoin / fluxlowz[0])
             fluxlowzarray.append(fluxlowz * normalization_factor)
 
-        #TODO: use the SALT2-extended model to define the flux when <3 suitable
-        # templates are available for a given phase.
-
+        # extend the template0 SED into the IR for this phase
+        # using the median of all the lowz templates (or the Hsiao model when
+        # templates are not available
         if len(fluxlowzarray)<5:
             print("only %i templates for phase = %.1f. Using Hsiao model" % (
                 len(fluxlowzarray), thisphase))
@@ -774,8 +764,6 @@ def extend_template0_ir(modeldict = None, x1min=-1, x1max=1,
             fluxlowzarray = np.array(fluxlowzarray)
             fluxlowzmedian = np.median(fluxlowzarray, axis=0)
 
-        # extend the template0 SED into the IR for this phase
-        # using the median of all the lowz templates
         ijoin0 = np.argmin(abs(wave0 - wavejoin))
         ijoinlowz = np.argmin(abs(waveir - wavejoin))
 
@@ -791,7 +779,7 @@ def extend_template0_ir(modeldict = None, x1min=-1, x1max=1,
             outlines.append( "%6.2f    %12i  %12.7e\n"%(
                     thisphase, wavenew[j], fluxnew[j] ) )
 
-    # write it out to the new template sed .dat file
+    # write it out to the new template0 .dat file
     fout = open( temp0fileOUT, 'w' )
     fout.writelines( outlines )
     fout.close()
@@ -799,10 +787,138 @@ def extend_template0_ir(modeldict = None, x1min=-1, x1max=1,
 def plot_extended_template0():
     # TODO : update to use the lowztemplate class methods
     pl.clf()
-    newtemp0 = LowzTemplate('salt2ir/salt2_template_0.dat')
+    newtemp0 = TimeSeriesGrid('salt2ir/salt2_template_0.dat')
     for phase, color in zip([-15,-5,0,5,25],['m','b','g','r','k']):
-        newtemp0.plot_sed(phase=phase, color=color, ls='-',
-                          label='phase = %i'%int(phase))
+        newtemp0.plot_at_phase(phase=phase, color=color, ls='-',
+                               label='phase = %i'%int(phase))
     pl.legend(loc='upper right')
 
 
+
+
+def extend_template1_ir(modeldict = None, cmin=-0.1, cmax=0.3,
+                        modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
+                        salt2dir = 'salt2-4',
+                        salt2irdir = 'salt2ir',
+                        wavejoin = 8500, wavemax = 18000,
+                        showplots=False):
+    """ extend the M1 component of the SALT2 model into the IR.  (this is the
+    component that is multiplied by the SALT2 parameter x1, and therefore
+    reflects changes in the shape of the light curve.
+
+    :param modeldict:
+    :param modeldir:
+    :param salt2dir:
+    :param salt2irdir:
+    :param wavejoin:
+    :param wavemax:
+    :param showplots:
+    :return:
+    """
+    if modeldict == None:
+        modeldict = load_sncosmo_models()
+    salt2dir = os.path.join(modeldir, salt2dir)
+    salt2irdir = os.path.join(modeldir, salt2irdir)
+
+    temp0extfile = os.path.join( salt2irdir, 'salt2_template_0.dat' )
+    temp0ext = TimeSeriesGrid(temp0extfile)
+
+    temp1fileIN = os.path.join( salt2dir, 'salt2_template_1.dat' )
+    temp1fileOUT = os.path.join( salt2irdir, 'salt2_template_1.dat' )
+    temp1 = TimeSeriesGrid(temp1fileIN)
+    wavestep = np.median(np.diff(temp1.wave[0]))
+
+    waveopt = np.arange(4000, 8000, wavestep)
+    waveir = np.arange(wavejoin, wavemax+wavestep, wavestep)
+
+    phaselist = [-5,0,5]
+    iphaselist = [np.argmin(np.abs(temp1.phase-phaselist[j]))
+                  for j in range(len(phaselist))]
+    iax=0
+
+    # for iphase1 in range(len(temp1.phase)): # iphaselist:
+    for iphase1 in iphaselist:
+        iax+=1
+        thisphase = temp1.phase[iphase1]
+
+        # get the SALT2 template0 and template1 data for this day
+        # and define interpolating functions
+        iphase0 = np.argmin(np.abs(temp0ext.phase-thisphase))
+        M0 = scinterp.interp1d(temp0ext.wave[iphase0], temp0ext.value[iphase0],
+                               bounds_error=False, fill_value=0)
+
+        M1 = scinterp.interp1d(temp1.wave[iphase1], temp1.value[iphase1],
+                               bounds_error=False, fill_value=0)
+
+
+        # ijoin = np.argmin(np.abs(wave1-wavejoin))
+        # M1join = M1[ijoin]
+        # iopt = np.where((np.abs(M0*M1)>0) & (4000<wave0ext) & (wave0ext<8000))[0]
+        print( 'solving for IR tail of template_1 for day : %i'%thisphase )
+
+        M1extlist = []
+        for name in __LOWZLIST__:
+            lowzsn = modeldict[name.lower()]
+
+            if lowzsn.mintime()>thisphase: continue
+            if lowzsn.maxtime()<thisphase: continue
+            if lowzsn.salt2c<cmin: continue
+            if lowzsn.salt2c>cmax: continue
+
+            fluxlowz_opt = lowzsn.flux(thisphase, waveopt)
+            if np.sum(fluxlowz_opt)==0: continue
+
+            # solve for x0 as a function of lambda (should be ~constant!)
+            # over optical wavelengths
+            # Define a scalar x0 as the median value over the
+            # 4000-8000 angstrom range
+            x0 = np.median((fluxlowz_opt /
+                            (M0(waveopt) + lowzsn.salt2x1 * M1(waveopt))))
+
+            # solve for the M1 array over the NIR wavelength range (8500+ A)
+            fluxlowz_ir = lowzsn.flux(thisphase, waveir)
+            M1ext = (1/lowzsn.salt2x1) * ((fluxlowz_ir/x0) - M0(waveir))
+            M1extlist.append(M1ext)
+
+        if thisphase==0:
+            fig1 = pl.figure(1)
+            fig1.clf()
+            ax1 = fig1.gca()
+            for M1ext in M1extlist:
+                ax1.plot(waveir, M1ext, lw=2, alpha=0.3, color='c')
+
+            ax1.plot(waveir, np.median(M1extlist, axis=0), lw=2, color='k')
+            waveuvopt = np.arange(2000, 00, 10)
+            ax1.plot(temp1.wave[0], M1(temp1.wave[0]), color='r', lw=2)
+            import pdb; pdb.set_trace()
+        """
+        if len(M1nirlist)<5:
+            print("only %i templates for phase = %.1f. Using Hsiao model" % (
+                len(M1nirlist), thisphase))
+            fluxlowzmedian = modeldict['hsiao'].flux(thisphase, waveir)
+        else:
+            fluxlowzarray = np.array(fluxlowzarray)
+            fluxlowzmedian = np.median(fluxlowzarray, axis=0)
+
+        # extend the template0 SED into the IR for this phase
+        # using the median of all the lowz templates
+        ijoin0 = np.argmin(abs(wave0ext - wavejoin))
+        ijoinlowz = np.argmin(abs(waveir - wavejoin))
+
+        if flux0[ijoin0]>0:
+            scalefactor = fluxlowzmedian[ijoinlowz]/flux0[ijoin0]
+        else:
+            scalefactor = 1
+        wavenew = np.append(wave0ext[:ijoin0], waveir.tolist())
+        fluxnew = np.append(flux0[:ijoin0], (scalefactor*fluxlowzmedian))
+
+        # append to the list of output data lines
+        for j in range( len(wavenew) ) :
+            outlines.append( "%6.2f    %12i  %12.7e\n"%(
+                    thisphase, wavenew[j], fluxnew[j] ) )
+
+    # write it out to the new template sed .dat file
+    fout = open( temp1fileOUT, 'w' )
+    fout.writelines( outlines )
+    fout.close()
+"""
