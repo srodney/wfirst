@@ -8,6 +8,10 @@ import sncosmo
 from scipy import integrate as scint, interpolate as scinterp, optimize as scopt
 import exceptions
 
+
+_B_WAVELENGTH = 4302.57
+_V_WAVELENGTH = 5428.55
+
 __THISFILE__ = sys.argv[0]
 if 'ipython' in __THISFILE__ :
     __THISFILE__ = __file__
@@ -332,7 +336,7 @@ def get_mlcs_to_salt2_parameter_conversion_functions(
     x1fitparam = x1fit[0]
     x1fitcov = np.sqrt(np.diag(x1fit[1]))
 
-    cfit = scopt.curve_fit(quadratic, av, c,
+    cfit = scopt.curve_fit(linear, av, c,
                            p0=None, sigma=cerr,
                            absolute_sigma=True,
                            check_finite=True, )
@@ -365,7 +369,7 @@ def get_mlcs_to_salt2_parameter_conversion_functions(
 
         avrange = np.arange(-0.1, 1.9, 0.01)
         ax2.plot( avrange,
-                  quadratic(avrange, cfitparam[0],  cfitparam[1], cfitparam[2]),
+                  linear(avrange, cfitparam[0],  cfitparam[1]),
                   ls='-', color='r', marker=' ')
 
         ax2.set_xlim(-0.1, 1.9)
@@ -375,10 +379,13 @@ def get_mlcs_to_salt2_parameter_conversion_functions(
         return quadratic(delta, x1fitparam[0], x1fitparam[1], x1fitparam[2])
 
     def mlcsav_to_salt2c(c):
-        return quadratic(c, cfitparam[0], cfitparam[1], cfitparam[2])
+        return linear(c, cfitparam[0], cfitparam[1])
 
     return mlcsdelta_to_salt2x1, mlcsav_to_salt2c
 
+
+def linear(x, A, B):
+    return A + B * x
 
 def quadratic(x, A, B, C):
     return A + B * x + C * x * x
@@ -387,14 +394,31 @@ def cubic(x, A, B, C, D):
     return A + B * x + C * x * x + D * x * x * x
 
 
-def ccm_unred(wave, flux, ebv, r_v=""):
+def ccm_unred(wave, flux, ebv, r_v=3.1):
     """ccm_unred(wave, flux, ebv, r_v="")
     Deredden a flux vector using the CCM 1989 (and O'Donnell 1994)
     parameterization. Returns an array of the unreddened flux
+    """
+    wave = np.array(wave, float)
+    flux = np.array(flux, float)
+    if wave.size != flux.size:
+        raise TypeError, 'ERROR - wave and flux vectors must be the same size'
+
+    a_lambda = ccm_extinction(wave, ebv, r_v)
+
+    funred = flux * 10.0**(0.4*a_lambda)
+
+    return funred
+
+
+def ccm_extinction(wave, ebv, r_v=3.1):
+    """
+    The extinction (A_lambda) for given wavelength (or vector of wavelengths)
+    from the CCM 1989 (and O'Donnell 1994) parameterization. Returns an
+    array of extinction values for each wavelength in 'wave'
 
     INPUTS:
     wave - array of wavelengths (in Angstroms)
-    dec - calibrated flux array, same number of elements as wave
     ebv - colour excess E(B-V) float. If a negative ebv is supplied
           fluxes will be reddened rather than dereddened
 
@@ -438,42 +462,35 @@ def ccm_unred(wave, flux, ebv, r_v=""):
     array([9.7976e+012, 1.12064e+07, 32287.1])
     """
     import numpy as np
-    wave = np.array(wave, float)
-    flux = np.array(flux, float)
-
-    if wave.size != flux.size: raise TypeError, 'ERROR - wave and flux vectors must be the same size'
-
-    if not bool(r_v): r_v = 3.1
+    scalar = not np.iterable(wave)
+    if scalar:
+        wave = np.array([wave], float)
+    else:
+        wave = np.array(wave, float)
 
     x = 10000.0/wave
     npts = wave.size
     a = np.zeros(npts, float)
     b = np.zeros(npts, float)
 
-    ###############################
     #Infrared
-
     good = np.where( (x > 0.3) & (x < 1.1) )
     a[good] = 0.574 * x[good]**(1.61)
     b[good] = -0.527 * x[good]**(1.61)
 
-    ###############################
     # Optical & Near IR
-
     good = np.where( (x  >= 1.1) & (x < 3.3) )
     y = x[good] - 1.82
 
-    c1 = np.array([ 1.0 , 0.104,   -0.609,    0.701,  1.137, \
+    c1 = np.array([ 1.0 , 0.104,   -0.609,    0.701,  1.137,
                   -1.718,   -0.827,    1.647, -0.505 ])
-    c2 = np.array([ 0.0,  1.952,    2.908,   -3.989, -7.985, \
+    c2 = np.array([ 0.0,  1.952,    2.908,   -3.989, -7.985,
                   11.102,    5.491,  -10.805,  3.347 ] )
 
     a[good] = np.polyval(c1[::-1], y)
     b[good] = np.polyval(c2[::-1], y)
 
-    ###############################
     # Mid-UV
-
     good = np.where( (x >= 3.3) & (x < 8) )
     y = x[good]
     F_a = np.zeros(np.size(good),float)
@@ -488,9 +505,7 @@ def ccm_unred(wave, flux, ebv, r_v=""):
     a[good] =  1.752 - 0.316*y - (0.104 / ( (y-4.67)**2 + 0.341 )) + F_a
     b[good] = -3.090 + 1.825*y + (1.206 / ( (y-4.62)**2 + 0.263 )) + F_b
 
-    ###############################
     # Far-UV
-
     good = np.where( (x >= 8) & (x <= 11) )
     y = x[good] - 8.0
     c1 = [ -1.073, -0.628,  0.137, -0.070 ]
@@ -498,14 +513,14 @@ def ccm_unred(wave, flux, ebv, r_v=""):
     a[good] = np.polyval(c1[::-1], y)
     b[good] = np.polyval(c2[::-1], y)
 
-    # Applying Extinction Correction
-
+    # Defining the Extinction at each wavelength
     a_v = r_v * ebv
     a_lambda = a_v * (a + b/r_v)
+    if scalar:
+        a_lambda = a_lambda[0]
+    return a_lambda
 
-    funred = flux * 10.0**(0.4*a_lambda)
 
-    return funred
 
 def load_metadata(metadatafilename='lowz_metadata.txt'):
     """read in the low-z SN metadata from the file provided by Arturo"""
@@ -1061,3 +1076,156 @@ MAGERR_FLOOR:   0.005            # don;t allow smaller error than this
 MAGERR_LAMOBS:  0.1  2000  4000  # magerr minlam maxlam
 MAGERR_LAMREST: 0.1   100   200  # magerr minlam maxlam
 """
+
+
+def salt2_colorlaw(wave, params,
+                   colorlaw_range=[2800,7000]):
+    """Return the  extinction in magnitudes as a function of wavelength,
+    for c=1. This is the version 1 extinction law used in SALT2 2.0
+    (SALT2-2-0).
+
+    Notes
+    -----
+    From SALT2 code comments:
+
+    if(l_B<=l<=l_R):
+        ext = exp(color * constant *
+                  (alpha*l + params(0)*l^2 + params(1)*l^3 + ... ))
+            = exp(color * constant * P(l))
+
+        where alpha = 1 - params(0) - params(1) - ...
+
+    if (l > l_R):
+        ext = exp(color * constant * (P(l_R) + P'(l_R) * (l-l_R)))
+    if (l < l_B):
+        ext = exp(color * constant * (P(l_B) + P'(l_B) * (l-l_B)))
+    """
+    v_minus_b = _V_WAVELENGTH - _B_WAVELENGTH
+    l = (wave - _B_WAVELENGTH) / v_minus_b
+    l_lo = (colorlaw_range[0] - _B_WAVELENGTH) / v_minus_b
+    l_hi = (colorlaw_range[1] - _B_WAVELENGTH) / v_minus_b
+
+    alpha = 1. - sum(params)
+    coeffs = [0., alpha]
+    coeffs.extend(params)
+    coeffs = np.array(coeffs)
+    prime_coeffs = (np.arange(len(coeffs)) * coeffs)[1:]
+
+    extinction = np.empty_like(wave)
+
+    # Blue side
+    idx_lo = l < l_lo
+    p_lo = np.polyval(np.flipud(coeffs), l_lo)
+    pprime_lo = np.polyval(np.flipud(prime_coeffs), l_lo)
+    extinction[idx_lo] = p_lo + pprime_lo * (l[idx_lo] - l_lo)
+
+    # Red side
+    idx_hi = l > l_hi
+    p_hi = np.polyval(np.flipud(coeffs), l_hi)
+    pprime_hi = np.polyval(np.flipud(prime_coeffs), l_hi)
+    extinction[idx_hi] = p_hi + pprime_hi * (l[idx_hi] - l_hi)
+
+    # In between
+    idx_between = np.invert(idx_lo | idx_hi)
+    extinction[idx_between] = np.polyval(np.flipud(coeffs), l[idx_between])
+
+    return -extinction
+
+
+def fit_salt2colorlaw_to_ccm(c=0.1, Rv=3.1,
+                             wmin=2000, wjoin=6750, wmax=25000,
+                             salt2_colorlaw_range = [2800, 7000],
+                             modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
+                             salt2subdir='salt2-4', salt2irsubdir='salt2ir',
+                             uselowzfit=False, showfit=False):
+    """ Find the SALT2 color law parameters that will cause the color law to
+    approximately match the Cardelli+ 1989 extinction law (as extended
+    by O'Donnell 1994) for IR wavelengths.
+    :param c: SALT2 color parameter (~E(B-V))
+    :return:
+    """
+    if uselowzfit:
+        # Use the function that converts from MLCS A_V to SALT2 c
+        # to find the value of E(B-V) for this value of c
+        d2x1, av2c = get_mlcs_to_salt2_parameter_conversion_functions()
+        avrange = np.arange(0,5,0.01)
+        crange = av2c(avrange)
+        ithisc = np.argmin(np.abs(crange-c))
+        Av = avrange[ithisc]
+        EBV = avrange/Rv
+    else:
+        # To first order (and for Rv=3.1) we can use: E(B-V) = c
+        EBV = c
+
+    # define a wavelength grid that extends from the red end of the SALT2
+    # color law range out to
+    # wave = np.append(np.arange(wmin, wjoin, 10.0), np.arange(wjoin,wmax,100.0))
+    wave = np.arange(wmin, wmax, 10.0)
+    alambda = lambda w: ccm_extinction(w, EBV, Rv)
+    aB = ccm_extinction(_B_WAVELENGTH, EBV, Rv)
+
+    def fitting_function(w, param0, param1, param2, param3):
+        params = [param0, param1, param2, param3]
+        return c * salt2_colorlaw(
+            w, params, colorlaw_range=salt2_colorlaw_range)
+
+    paramA = [-0.504294, 0.787691, -0.461715, 0.0815619]
+    extinctioncurvetofit = np.where(wave < wjoin,
+                                    c * salt2_colorlaw(wave, paramA),
+                                    alambda(wave) - aB)
+    fitres = scopt.curve_fit( fitting_function, wave,
+                              extinctioncurvetofit, paramA)
+    paramfit = fitres[0]
+
+    if showfit:
+        pl.clf()
+        salt2colorlaw0 = salt2_colorlaw(wave, params=paramA[:4],
+                                        colorlaw_range=[2800,7000])
+        salt2colorlawfit = salt2_colorlaw(wave, params=paramfit[:4],
+                                          colorlaw_range=salt2_colorlaw_range)
+
+        pl.plot(wave, c * salt2colorlaw0, 'k-', label='SALT2-4 color law')
+        pl.plot(wave, c * salt2colorlawfit, 'r--', label='SALT2ir color law')
+        pl.plot(wave, alambda(wave) - aB, 'b-.', label='Dust with Rv=3.1')
+        ax = pl.gca()
+        ax.set_xlim(3000,20000)
+        ax.set_ylim(-0.5,0.1)
+
+        ax.text(0.95, 0.55,
+                'SALT2-4 colorlaw range = [%i, %i]'%tuple([2800,7000]),
+                ha='right', va='bottom', transform=ax.transAxes, color='k')
+        ax.text(0.95, 0.45,
+                ('SALT2-4 colorlaw parameters =\n'
+                '[%.3f, %.3f, %.3f, %.3f]'%tuple(paramA)),
+                ha='right', va='bottom', transform=ax.transAxes, color='k')
+
+        ax.text(0.05, 0.15,
+                '$\lambda_{\\rm join}$= %i'%wjoin,
+                ha='left', va='bottom', transform=ax.transAxes, color='r')
+        ax.text(0.05, 0.1,
+                'SALT2ir colorlaw range = [%i, %i]'%tuple(salt2_colorlaw_range),
+                ha='left', va='bottom', transform=ax.transAxes, color='r')
+        ax.text(0.05, 0.05,
+                ('SALT2ir colorlaw parameters ='
+                '[%.3f, %.3f, %.3f, %.3f]'%tuple(paramfit)),
+                ha='left', va='bottom', transform=ax.transAxes, color='r')
+        ax.legend(loc='upper right')
+        ax.set_xlabel('Wavelength ($\AA$)')
+        ax.set_ylabel('A$_{\lambda}$ - A$_{B}$  or  c$\\times$ CL($\lambda$)')
+        pl.draw()
+
+    # write out the revised color law as a file
+    outfile= os.path.join(modeldir,
+                          salt2irsubdir + '/salt2_color_correction.dat')
+    fout = open(outfile, 'w')
+    print >> fout, '%i' % len(paramfit)
+    for param in paramfit:
+        print >> fout, '%.8f' % param
+    print >> fout, 'Salt2ExtinctionLaw.version 1'
+    print >> fout, 'Salt2ExtinctionLaw.min_lambda %i' % salt2_colorlaw_range[0]
+    print >> fout, 'Salt2ExtinctionLaw.max_lambda %i' % salt2_colorlaw_range[1]
+    fout.close()
+    print "Updated SALT2 color law parameters written to %s" % outfile
+    return
+
+
