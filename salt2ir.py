@@ -1,3 +1,10 @@
+"""
+2016   S. Rodney
+Module for generating the SALT2 model data files with extrapolation to
+IR wavelengths, guided by a sample of low-z Type Ia SN templates provided by
+Arturo Avelino and Andy Friedmann
+"""
+
 import numpy as np
 from matplotlib import pyplot as pl
 import os
