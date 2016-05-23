@@ -122,8 +122,8 @@ class TimeSeriesGrid(object):
         return wave, flux
 
 
-    def extrapolate_flatline(self, outfilename,
-                             maxwave=25000, showplots=False):
+    def extrapolate_flatline(self, outfilename, refwave=8500,
+                             maxwave=25000):
         """ use a super-crude flatline extension of the value array
         to extrapolate this model component to the IR at all phases """
         outlines = []
@@ -135,7 +135,9 @@ class TimeSeriesGrid(object):
 
             # redward flatline extrapolation from last point
             wavenew = np.arange(w[0], maxwave, wavestep)
-            valnew = np.append(v, np.zeros(len(wavenew)-len(w)) + v[-1])
+            iref = np.argmin(np.abs(w-refwave))
+            valnew = np.append(v[:iref],
+                               np.zeros(len(wavenew)-len(w[:iref])) + v[iref])
 
             # append to the list of output data lines
             for j in range(len(wavenew)):
@@ -147,6 +149,77 @@ class TimeSeriesGrid(object):
         fout.writelines(outlines)
         fout.close()
         return
+
+
+    def extrapolate_linearfit(self, outfilename, refwave=8500,
+                              maxwave=25000, showplots=False):
+        """ use a super-crude linear-fit extension of the value array
+        to extrapolate this model component to the IR at all phases """
+        outlines = []
+        for iphase in range(len(self.phase)):
+            thisphase = self.phase[iphase]
+            w = self.wave[iphase]
+            v = self.value[iphase]
+            wavestep = w[1] - w[0]
+
+            # red end of the array, to be fit
+            iref = np.argmin(np.abs(w-refwave))
+
+            linfitres = scopt.curve_fit(linear, w[iref:], v[iref:])
+            linfitA = linfitres[0][0]
+            linfitB = linfitres[0][1]
+
+            # redward flatline extrapolation from last point
+            waveir = np.arange(w[-1]+wavestep, maxwave, wavestep)
+            wavenew = np.append(w, waveir)
+            valnew = np.append( v, linear(waveir, linfitA, linfitB))
+
+            # append to the list of output data lines
+            for j in range(len(wavenew)):
+                outlines.append("%6.2f    %12i  %12.7e\n" % (
+                    thisphase, wavenew[j], valnew[j]))
+
+        # write it out to the new .dat file
+        fout = open(outfilename, 'w')
+        fout.writelines(outlines)
+        fout.close()
+        return
+
+    def extrapolate_linearto0(self, outfilename, refwave=8500,
+                              maxwave=25000, maxwaveval=0):
+        """ use a super-crude linear-fit extension of the value array
+        to extrapolate this model component to the IR at all phases """
+        outlines = []
+        for iphase in range(len(self.phase)):
+            thisphase = self.phase[iphase]
+            w = self.wave[iphase]
+            v = self.value[iphase]
+            wavestep = w[1] - w[0]
+
+            # red end of the array, to be fit
+            iref = np.argmin(np.abs(w-refwave))
+
+            linfitB = (maxwaveval-v[iref]) / (maxwave-refwave)
+            linfitA = maxwaveval - linfitB * maxwave
+
+            # redward flatline extrapolation from last point
+            waveir = np.arange(refwave, maxwave, wavestep)
+            wavenew = np.append(w[:iref], waveir)
+            valnew = np.append( v[:iref],
+                                linear(waveir, linfitA, linfitB))
+
+            # append to the list of output data lines
+            for j in range(len(wavenew)):
+                outlines.append("%6.2f    %12i  %12.7e\n" % (
+                    thisphase, wavenew[j], valnew[j]))
+
+        # write it out to the new .dat file
+        fout = open(outfilename, 'w')
+        fout.writelines(outlines)
+        fout.close()
+        return
+
+
 
 def load_sncosmo_models(modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
                         salt2subdir='salt2-4', salt2irsubdir='salt2ir',
@@ -742,8 +815,7 @@ def extend_template0_ir(modeldict = None, x1min=-1, x1max=1,
                         modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
                         salt2dir = 'salt2-4',
                         salt2irdir = 'salt2ir',
-                        wavejoin = 8500, wavemax = 24990,
-                        showplots=False):
+                        wavejoin = 8500, wavemax = 24990):
     """ extend the salt2 Template_0 model component
     by adopting the IR tails from a collection of SN Ia template SEDs.
     Here we use the collection of CfA, CSP, and other low-z SNe provided by
@@ -1018,7 +1090,7 @@ def plot_extended_template1(phaselist=[-15,-5,0,5,25]):
 
 
 
-def extendSALT2_flatline(
+def extendSALT2_flatline( wref=8500,
         modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
         salt2subdir='salt2-4', salt2irsubdir='salt2ir',
         showplots = False):
@@ -1045,18 +1117,67 @@ def extendSALT2_flatline(
         infile = os.path.join(salt2modeldir, filename)
         outfile = os.path.join(salt2irmodeldir, filename)
         timeseries = TimeSeriesGrid(infile)
+
+        if 'dispersion' in filename:
+            timeseries.extrapolate_linearto0(
+                outfilename=outfile, refwave=8500,
+                maxwave=25000, maxwaveval=1)
+        elif 'lc' in filename:
+            timeseries.extrapolate_linearto0(
+                outfilename=outfile, refwave=wref,
+                maxwave=25000, maxwaveval=0)
+        else:
+            timeseries.extrapolate_flatline(
+                outfilename=outfile, refwave=wref,
+                maxwave=25000)
         if showplots:
             iax+=1
-            ax = fig.add_subplot(7,1,iax)
+            if iax==1:
+                ax = fig.add_subplot(7,1,iax)
+                ax1 = ax
+            else:
+                ax = fig.add_subplot(7,1,iax, sharex=ax1)
             timeseries.plot_at_phase(0, color='k', lw=2.5, ls='-', marker=' ')
-        timeseries.extrapolate_flatline(outfilename=outfile,
-                                        maxwave=25000, showplots=False)
-        if showplots:
             timeseriesNew = TimeSeriesGrid(outfile)
             timeseriesNew.plot_at_phase(0, color='r', lw=1,
                                         ls='--', marker=' ')
-            ax.text(0.95, 0.05, filename, transform=ax.transAxes,
-                    fontsize='large', ha='right', va='bottom')
+            ax.text(0.95, 0.95, filename, transform=ax.transAxes,
+                    fontsize='large', ha='right', va='top')
+            if iax==2:
+                ax.set_ylim(-1e-5,3.2e-5)
+            elif iax==3:
+                ax.set_ylim(-1e-4,6e-4)
+            elif iax==4:
+                ax.set_ylim(-5e-6,5e-4)
+            elif iax>3:
+                ax.set_ylim(-5e-6,5e-5)
+            ax.set_xlim(2000,25000)
+    # read in the salt2_color_correction.dat file
+    # and repeat the fit parameters into the .INFO file:
+    colorlawfile = os.path.join(salt2irmodeldir,
+                                'salt2_color_correction.dat')
+    fin = open(colorlawfile, 'r')
+    words = fin.read().split()
+    fin.close()
+
+    # Get colorlaw coeffecients.
+    npoly = int(words[0])
+    colorlaw_coeffs = [float(word) for word in words[1: 1 + npoly]]
+
+    # Look for keywords in the rest of the file.
+    version = 0
+    colorlaw_range = [3000., 7000.]
+    for i in range(1+npoly, len(words)):
+        if words[i] == 'Salt2ExtinctionLaw.version':
+            version = int(words[i+1])
+        if words[i] == 'Salt2ExtinctionLaw.min_lambda':
+            colorlaw_range[0] = float(words[i+1])
+        if words[i] == 'Salt2ExtinctionLaw.max_lambda':
+            colorlaw_range[1] = float(words[i+1])
+    COLORLAWLINE = 'COLORCOR_PARAMS: %i %i %i ' % (
+        colorlaw_range[0], colorlaw_range[1], npoly)
+    for i in range(npoly):
+        COLORLAWLINE += ' %.8f' % colorlaw_coeffs[i]
 
     outinfo = os.path.join(salt2irmodeldir, 'SALT2.INFO')
     fout = open(outinfo, 'w')
@@ -1064,7 +1185,9 @@ def extendSALT2_flatline(
 # open rest-lambda range WAAAY beyond nominal 2900-7000 A range.
 RESTLAMBDA_RANGE:  2000. 25000.
 COLORLAW_VERSION: 1
-COLORCOR_PARAMS: 2800 7000 4 -0.537186 0.894515 -0.513865 0.0891927
+""" +\
+COLORLAWLINE + \
+"""
 COLOR_OFFSET:  0.0
 
 MAG_OFFSET: 0.27
