@@ -2,7 +2,7 @@
 2016   S. Rodney
 Module for generating the SALT2 model data files with extrapolation to
 IR wavelengths, guided by a sample of low-z Type Ia SN templates provided by
-Arturo Avelino and Andy Friedmann
+Arturo Avelino and Andy Friedman
 """
 
 import numpy as np
@@ -657,6 +657,7 @@ def deredden_template_sed(sedfile, sedfileout=None, snname=None,
     Rvhost = metadata['Rv_mlcs'][imeta]
     Avhost = metadata['Av_mlcs'][imeta]
     Delta_mlcs = metadata['Delta'][imeta]
+    TBmax = metadata['TBmax'][imeta]
     if Delta_mlcs==-999:
         Delta_mlcs=0
     if Avhost==-999:
@@ -711,6 +712,7 @@ def deredden_template_sed(sedfile, sedfileout=None, snname=None,
         print >> fout, '# AVhost = %.5f' % Avhost
         print >> fout, '# RVhost = %.5f' % Rvhost
         print >> fout, '# E(B-V)host = %.5f' % EBVhost
+        print >> fout, '# TBmax  = %.1f' % TBmax
         print >> fout, '# phase                   wavelength               flux'
 
     for phase in sorted(snphase.tolist()) :
