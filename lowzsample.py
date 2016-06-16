@@ -12,7 +12,7 @@ from astropy.table import Table
 import sncosmo
 from scipy import integrate as scint, interpolate as scinterp, optimize as scopt
 import exceptions
-
+import json
 
 _B_WAVELENGTH = 4302.57
 _V_WAVELENGTH = 5428.55
@@ -57,12 +57,29 @@ class LowzLightCurve(Table):
                  datadir='/Users/rodney/Dropbox/WFIRST/SALT2IR/lightcurve_data',
                  metadatadir='/Users/rodney/Dropbox/WFIRST/SALT2IR/lowzIa'):
         """
-        :return:
+        :return: a light curve object with a table of light curve data stored
+        in the '.lcdata' property
         """
-        lcdatafilename = os.path.join(datadir, name + '_OIR.mag.dat')
-        if os.path.exists(lcdatafilename):
-            self.lcdatfile = lcdatafilename
-            self.rd_mag_data()
+        self.name = name.lower()
+        self.snid = name.lstrip('sn')
+        self.propername = 'SN' + self.snid
+
+        if datadir.endswith('.osc'):
+            # Loading Open SN Catalog data in JSON format
+            jsondatafilename = os.path.join(
+                datadir, self.propername + '.json')
+            if os.path.exists(jsondatafilename):
+                self.jsondatfile = jsondatafilename
+                self.rd_jsonfile()
+            else:
+                import pdb; pdb.set_trace()
+        else:
+            lcdatafilename = os.path.join(datadir, name + '_OIR.mag.dat')
+            if os.path.exists(lcdatafilename):
+                self.lcdatfile = lcdatafilename
+                self.rd_datfile()
+
+        if 'mjd' in self.__dict__:
             self.magsys = np.full(self.mjd.shape, 'AB', np.dtype('a2'))
             self.zpt = np.ones(len(self.magsys)) * 25
             self.flux = 10**(-0.4*(self.mag-self.zpt))
@@ -71,6 +88,7 @@ class LowzLightCurve(Table):
                 'mjd': self.mjd, 'mag': self.mag, 'magerr': self.magerr,
                 'flux':self.flux, 'fluxerr':self.fluxerr,
                 'band': self.band, 'magsys': self.magsys, 'zpt':self.zpt})
+
         self.metadatafilename = None
         for survey in ['CSP','CfA','ESO','LCO','LOSS',]:
             metadatafilename = os.path.join(metadatadir,
@@ -92,7 +110,7 @@ class LowzLightCurve(Table):
             val = dline.lstrip('#').split()[-1]
             self.__dict__[key] = val
 
-    def rd_mag_data(self):
+    def rd_datfile(self):
         lcdata = Table.read(self.lcdatfile,
                             format='ascii.basic',
                             names=['band','mjd','mag','magerr','instr'])
@@ -100,11 +118,43 @@ class LowzLightCurve(Table):
         self.mag = lcdata['mag']
         self.magerr = lcdata['magerr']
         self.instrument = lcdata['instr']
-        bandlist = []
-        for i in range(len(lcdata)):
-            band = lcdata['band'][i]
-            if band.endswith('CSP'):
-                bandname = 'csp' + band.split('_')[0].lower()
+        self.band = lcdata['band']
+        self.fixbandnames()
+
+    def rd_jsonfile(self):
+        """ Read in the light curve data from a .json file provided by the
+        open SN catalog.
+        """
+        fin = open(self.jsondatfile, 'r')
+        jsondata = json.load(fin)
+        fin.close()
+
+        photdata = jsondata[self.propername]['photometry']
+        imagdata = np.array([i for i in range(len(photdata))
+                             if 'band' in photdata[i]
+                             and 'time' in photdata[i]
+                             and 'magnitude' in photdata[i]
+                             and 'e_magnitude' in photdata[i]
+                             and 'system' in photdata[i]
+                             ])
+        self.mjd = np.array([photdata[i]['time'] for i in imagdata],
+                            dtype=float)
+        self.mag = np.array([photdata[i]['magnitude'] for i in imagdata],
+                            dtype=float)
+        self.magerr = np.array([photdata[i]['e_magnitude'] for i in imagdata],
+                               dtype=float)
+        self.band = np.array([str(photdata[i]['band']) for i in imagdata],
+                             dtype=str)
+        self.instrument = np.array([photdata[i]['system'] for i in imagdata],
+                                   dtype=basestring)
+        self.fixbandnames()
+
+    def fixbandnames(self):
+        newbandnames = []
+        for i in range(len(self.band)):
+            bandi = self.band[i]
+            if bandi.endswith('CSP'):
+                bandname = 'csp' + bandi.split('_')[0].lower()
                 if bandname[-1] in ['y','j','h']:
                     if 'swo' in self.instrument[i].lower():
                         bandname += 's'
@@ -112,26 +162,26 @@ class LowzLightCurve(Table):
                         bandname += 'd'
                 if bandname[-1] == 'v':
                     bandname += '3009'
-            elif band in ['U','UX']:
+            elif bandi in ['U','UX']:
                 bandname = 'bessellux'
-            elif band in ['B','V','R','I']:
-                bandname = 'bessell' + band.lower()
-            elif band[0] in ['u','g','r','i','z']:
-                bandname = 'sdss' + band[0]
-            elif band[0] in ['Y','J','H','K']:
-                bandname = 'csp' + band.lower()
-                if band[0] != 'K':
+            elif bandi in ['B','V','R','I']:
+                bandname = 'bessell' + bandi.lower()
+            elif bandi[0] in ['u','g','r','i','z']:
+                bandname = 'sdss' + bandi[0]
+            elif bandi[0] in ['Y','J','H','K']:
+                bandname = 'csp' + bandi.lower()
+                if bandi[0] != 'K':
                     bandname += 'd'
             else:
-                print 'unrecognized band name %s' % band
-                bandname = band
+                print 'unrecognized band name %s' % bandi
+                bandname = bandi
                 import pdb; pdb.set_trace()
-            bandlist.append(bandname)
-        self.band = np.array(bandlist)
+            newbandnames.append(bandname)
+        self.band = np.array(newbandnames)
 
 
     def plot_lightcurve(self, modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
-                        fitmodel=True, salt2irsubdir='salt2ir'):
+                        fitmodel=True, salt2irsubdir='salt2ir', **kwargs):
         """ Make a figure showing the observed light curve of the given low-z
         Type Ia SN, compared to the light curve from the SALT2ir model for the
         (predefined) x1, c values appropriate to that SN.
@@ -143,8 +193,8 @@ class LowzLightCurve(Table):
         else:
             # evaluate the SALT2ir model for the given redshift, x1, c
             salt2irmodeldir = os.path.join(modeldir, salt2irsubdir)
-            salt2irsource = sncosmo.models.SALT2Source(modeldir=salt2irmodeldir,
-                                                      name='salt2ir')
+            salt2irsource = sncosmo.models.SALT2Source(
+                modeldir=salt2irmodeldir, name=salt2irsubdir)
             salt2irmodel = sncosmo.Model(source=salt2irsource)
             salt2irmodel.set(z=self.z, t0=self.TBmax,
                              x1=self.salt2x1, c=self.salt2c)
@@ -154,11 +204,12 @@ class LowzLightCurve(Table):
                 res, fitted_model = sncosmo.fit_lc(self.lcdata, salt2irmodel,
                                                    ['t0', 'x0', 'x1', 'c'],
                                                    bounds={'x1':[-3,3],
-                                                           'c':[-0.5,1.5]})
+                                                           'c':[-0.5,0.5]})
 
-                sncosmo.plot_lc(self.lcdata, model=fitted_model )
+                sncosmo.plot_lc(self.lcdata, model=fitted_model, **kwargs)
+                return res, fitted_model
             else:
-                sncosmo.plot_lc(self.lcdata, model=salt2irmodel)
+                sncosmo.plot_lc(self.lcdata, model=salt2irmodel, **kwargs)
 
 
 def mk_lightcurve_fig(lowzname, modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
@@ -183,6 +234,6 @@ def mk_lightcurve_fig(lowzname, modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
     salt2irmodel = sncosmo.models.SALT2Source(modeldir=salt2irmodeldir,
                                               name='salt2ir')
 
-
+    lowzlc.plot_lightcurve(modeldir=salt2irmodeldir)
 
 
