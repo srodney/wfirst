@@ -63,6 +63,8 @@ class LowzLightCurve(Table):
         self.name = name.lower()
         self.snid = name.lstrip('sn')
         self.propername = 'SN' + self.snid
+        self.model_fixedx1c = None
+        self.model_fitted = None
 
         if datadir.endswith('.osc'):
             # Loading Open SN Catalog data in JSON format
@@ -180,36 +182,64 @@ class LowzLightCurve(Table):
         self.band = np.array(newbandnames)
 
 
-    def plot_lightcurve(self, modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
-                        fitmodel=True, salt2irsubdir='salt2ir', **kwargs):
-        """ Make a figure showing the observed light curve of the given low-z
-        Type Ia SN, compared to the light curve from the SALT2ir model for the
-        (predefined) x1, c values appropriate to that SN.
+    def fitmodel(self, modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
+                 salt2subdir='salt2ir', fitbands=None):
+        """ fit a new model to the data
+        :param modeldir:
+        :return:
         """
-        if 'salt2x1' not in self.__dict__:
-            print("No metadata available for this SN. Can't overplot a model")
-            salt2irmodel=None
-            sncosmo.plot_lc(self.lcdata)
+        salt2irmodeldir = os.path.join(modeldir, salt2subdir)
+        salt2irsource = sncosmo.models.SALT2Source(
+            modeldir=salt2irmodeldir, name=salt2subdir)
+        salt2irmodel = sncosmo.Model(source=salt2irsource)
+
+        # limit the fit to specific bands if requested
+        if fitbands is None:
+            datatofit = self.lcdata
         else:
-            # evaluate the SALT2ir model for the given redshift, x1, c
-            salt2irmodeldir = os.path.join(modeldir, salt2irsubdir)
-            salt2irsource = sncosmo.models.SALT2Source(
-                modeldir=salt2irmodeldir, name=salt2irsubdir)
-            salt2irmodel = sncosmo.Model(source=salt2irsource)
+            if isinstance(fitbands, basestring):
+                fitbands = [fitbands]
+            itofit = np.array([], dtype=int)
+            for fitband in fitbands:
+                ithisband = np.where(self.band == fitband)[0]
+                itofit = np.append(itofit, ithisband)
+            datatofit = self.lcdata[itofit]
+
+        if 'salt2x1' not in self.__dict__:
+            print("No SALT2 fitres data available for this SN."
+                  " No predefined model")
+            self.model_fixedx1c = None
+            salt2irmodel.set(z=self.z, x1=0, c=0.1)
+        else:
+            # evaluate the SALT2 model for the given redshift, x1, c
             salt2irmodel.set(z=self.z, t0=self.TBmax,
                              x1=self.salt2x1, c=self.salt2c)
             salt2irmodel.set_source_peakabsmag(-19.3, 'bessellb','AB')
 
-            if fitmodel:
-                res, fitted_model = sncosmo.fit_lc(self.lcdata, salt2irmodel,
-                                                   ['t0', 'x0', 'x1', 'c'],
-                                                   bounds={'x1':[-3,3],
-                                                           'c':[-0.5,0.5]})
+            # fit the model without allowing x1 and c to vary
+            res, model_fixedx1c = sncosmo.fit_lc(
+                datatofit, salt2irmodel, ['t0', 'x0'], bounds={})
+            self.model_fixedx1c = model_fixedx1c
 
-                sncosmo.plot_lc(self.lcdata, model=fitted_model, **kwargs)
-                return res, fitted_model
-            else:
-                sncosmo.plot_lc(self.lcdata, model=salt2irmodel, **kwargs)
+        # fit the model allowing all parameters to vary
+        res, model_fitted = sncosmo.fit_lc(
+            datatofit, salt2irmodel, ['t0', 'x0', 'x1', 'c'],
+            bounds={'x1':[-3,3], 'c':[-0.5,0.5]})
+        self.model_fitted = model_fitted
+
+
+    def plot_lightcurve(self, fixedx1c=False, **kwargs):
+        """ Make a figure showing the observed light curve of the given low-z
+        Type Ia SN, compared to the light curve from the SALT2ir model for the
+        (predefined) x1, c values appropriate to that SN.
+        """
+        if self.model_fitted is None:
+            self.fitmodel()
+        if fixedx1c:
+            model = self.model_fixedx1c
+        else:
+            model = self.model_fitted
+        sncosmo.plot_lc(self.lcdata, model=model, **kwargs)
 
 
 def mk_lightcurve_fig(lowzname, modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
