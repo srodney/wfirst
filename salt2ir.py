@@ -307,7 +307,7 @@ def plot_template0_data(modeldict=None, phase=0, x1=0, c=0):
         iwavemax = np.where(wavelowz>=np.max(wave0))[0][0]
         fluxlowz_norm = scint.trapz(fluxlowz[:iwavemax], wavelowz[:iwavemax])
         pl.plot(wavelowz, fluxlowz/fluxlowz_norm,
-                'b-', alpha=0.1, lw=2 )
+                color='b',ls='-', alpha=0.1, lw=2 )
         # pl.plot(waveir, snflux/snflux.sum(), 'b-', alpha=0.3, lw=1 )
         fluxlowzarray.append(fluxlowz/fluxlowz_norm)
 
@@ -318,19 +318,20 @@ def plot_template0_data(modeldict=None, phase=0, x1=0, c=0):
     pl.plot(wave0, flux0/flux0_norm, 'k-', lw=3,
             label='SALT2-4 template0' )
 
-    # plot the median flux from all lowzIa templates
-    fluxlowzarray = np.array(fluxlowzarray)
-    pl.plot(wavelowz, np.median(fluxlowzarray, axis=0),
-            'r--', alpha=1, lw=2,
-            label='Median of low-z Sample' )
-
     # plot the normalized template0 flux from the modified SALT2-IR model
     # at the given phase:
     fluxir = salt2irmod.flux(phase, waveir)
     iwavemaxir = np.where(waveir>=np.max(wave0))[0][0]
     fluxir_norm = scint.trapz(fluxir[:iwavemaxir], waveir[:iwavemaxir])
-    pl.plot(waveir, fluxir/fluxir_norm, 'g:', lw=3,
-            label='SALT2-IR template0' )
+    pl.plot(waveir, fluxir/fluxir_norm, marker=' ', color='darkorange',
+            ls='-', lw=3,
+            label='SALT2-IR template0', zorder=90)
+
+    # plot the median flux from all lowzIa templates
+    fluxlowzarray = np.array(fluxlowzarray)
+    pl.plot(wavelowz, np.median(fluxlowzarray, axis=0),
+            color='m', ls='--', alpha=1, lw=1.5,
+            label='Median of low-z Sample', zorder=100,)
 
     ax = pl.gca()
     ax.set_xlabel('wavelength (Angstroms)')
@@ -1360,4 +1361,38 @@ def fit_salt2colorlaw_to_ccm(c=0.1, Rv=3.1,
     print "Updated SALT2 color law parameters written to %s" % outfile
     return
 
+
+def mk_salt2ir_template0_plots():
+
+    modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR'
+    salt2subdir='salt2ir'
+    salt2irmodeldir = os.path.join(modeldir, salt2subdir)
+    salt2irsource = sncosmo.models.SALT2Source(modeldir=salt2irmodeldir, name='salt2ir')
+    salt2irmodel = sncosmo.Model(source=salt2irsource)
+    wir = np.arange(2000, 24000, 10)
+
+    salt2model = sncosmo.Model('salt2')
+    wopt = np.arange(2000, 9000, 10)
+
+    iax = 0
+    fig = pl.gcf()
+    fig.clf()
+    for phase  in [-5,0,15,30]:
+        iax+=1
+        fig.add_subplot(2,2,iax)
+        fir = salt2irmodel.flux(phase, wir)
+        fopt = salt2model.flux(phase, wopt)
+
+        pl.plot( wir, fir, 'r-', label='SALT2ir')
+        pl.plot( wopt, fopt, 'k-', label='SALT2-4')
+        ax = pl.gca()
+        ax.text(0.5, 0.8, 'Phase=%i' % phase,
+                transform=ax.transAxes, fontsize='large')
+        ax.set_xlim(2000,16000)
+
+        if iax==2:
+            ax.legend(loc='center right')
+
+    ax.set_xlabel('wavelength (Angstrom)')
+    pl.draw()
 

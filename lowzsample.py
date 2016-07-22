@@ -80,10 +80,11 @@ class LowzLightCurve(Table):
             if os.path.exists(lcdatafilename):
                 self.lcdatfile = lcdatafilename
                 self.rd_datfile()
+            else:
+                import pdb; pdb.set_trace()
 
         if 'mjd' in self.__dict__:
-            self.magsys = np.full(self.mjd.shape, 'AB', np.dtype('a2'))
-            self.zpt = np.ones(len(self.magsys)) * 25
+            self.zpt = np.ones(len(self.magsys)) * 10
             self.flux = 10**(-0.4*(self.mag-self.zpt))
             self.fluxerr = 0.92103 * self.magerr * self.flux
             self.lcdata = Table({
@@ -113,6 +114,9 @@ class LowzLightCurve(Table):
             self.__dict__[key] = val
 
     def rd_datfile(self):
+        """ read in the data from one of the low-z NIR sample data files
+        provided by Arturo Avelino.
+        """
         lcdata = Table.read(self.lcdatfile,
                             format='ascii.basic',
                             names=['band','mjd','mag','magerr','instr'])
@@ -121,7 +125,7 @@ class LowzLightCurve(Table):
         self.magerr = lcdata['magerr']
         self.instrument = lcdata['instr']
         self.band = lcdata['band']
-        self.fixbandnames()
+        self.reformat_data()
 
     def rd_jsonfile(self):
         """ Read in the light curve data from a .json file provided by the
@@ -149,37 +153,58 @@ class LowzLightCurve(Table):
                              dtype=str)
         self.instrument = np.array([photdata[i]['system'] for i in imagdata],
                                    dtype=basestring)
-        self.fixbandnames()
+        self.reformat_data()
 
-    def fixbandnames(self):
-        newbandnames = []
+    def reformat_data(self, segregatecsp=False):
+        """ Reformat the data that has been read in from a data file.
+        * Fix the passband names to conform to the sncosmo names
+        * assign to a photometric system (Vega or AB) based on band name
+
+        :param segregatecsp: for any band listed in the dat file as a CSP
+                  band, assign it to the corresponding CSP filter from sncosmo
+                  instead of using the generic Bessell band of the same name.
+        """
+        newbandnames, magsyslist = [], []
         for i in range(len(self.band)):
             bandi = self.band[i]
-            if bandi.endswith('CSP'):
-                bandname = 'csp' + bandi.split('_')[0].lower()
-                if bandname[-1] in ['y','j','h']:
-                    if 'swo' in self.instrument[i].lower():
-                        bandname += 's'
-                    else:
-                        bandname += 'd'
-                if bandname[-1] == 'v':
-                    bandname += '3009'
+            if segregatecsp and bandi.endswith('CSP'):
+                 bandname = 'csp' + bandi.split('_')[0].lower()
+                 if bandi[0] in 'ugrizy':
+                     magsys = 'AB'
+                 elif bandi[0] in 'UBVRIYJHK':
+                     magsys = 'Vega'
+                 else:
+                     import pdb; pdb.set_trace()
+                 if bandname[-1] in ['y','j','h']:
+                     if 'swo' in self.instrument[i].lower():
+                         bandname += 's'
+                     else:
+                         bandname += 'd'
+                 elif bandname[-1] == 'v':
+                     bandname += '3009'
             elif bandi in ['U','UX']:
                 bandname = 'bessellux'
-            elif bandi in ['B','V','R','I']:
-                bandname = 'bessell' + bandi.lower()
-            elif bandi[0] in ['u','g','r','i','z']:
+                magsys = 'Vega'
+            elif bandi[0] in 'BVRI':
+                bandname = 'bessell' + bandi[0].lower()
+                magsys = 'Vega'
+            elif bandi[0] in 'ugriz':
                 bandname = 'sdss' + bandi[0]
-            elif bandi[0] in ['Y','J','H','K']:
-                bandname = 'csp' + bandi.lower()
+                magsys = 'AB'
+            elif bandi[0] in 'YJHK':
+                bandname = 'csp' + bandi[0].lower()
                 if bandi[0] != 'K':
                     bandname += 'd'
+                magsys = 'Vega'
             else:
                 print 'unrecognized band name %s' % bandi
                 bandname = bandi
                 import pdb; pdb.set_trace()
             newbandnames.append(bandname)
+            magsyslist.append(magsys)
         self.band = np.array(newbandnames)
+        self.magsys = np.array(magsyslist)
+        return
 
 
     def fitmodel(self, modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
@@ -242,12 +267,10 @@ class LowzLightCurve(Table):
         sncosmo.plot_lc(self.lcdata, model=model, **kwargs)
 
 
-def mk_lightcurve_fig(lowzname, modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
-                      salt2subdir='salt2-4', salt2irsubdir='salt2ir',
-                      lowzsubdir='lowzIa'):
+def mk_lightcurve_fig(lowzname, fitbands='all'):
     """ Make a figure showing the observed light curve of the given low-z
     Type Ia SN, compared to the light curve from the SALT2ir model for the
-    (predefined) x1, c values appropriate to that SN.
+    (best-fit) x1, c values appropriate to that SN.
     """
 
     if lowzname not in __LOWZNAMELIST__:
@@ -256,14 +279,40 @@ def mk_lightcurve_fig(lowzname, modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
     # read in the observed light curve data
     lowzlc = LowzLightCurve(lowzname)
 
+    bandlist = np.unique(lowzlc.band)
+    if isinstance(fitbands, list):
+        bandlisttofit = fitbands
+        fitbands = ','.join(fitbands)
+    elif fitbands == 'sdss':
+        bandlisttofit = ['sdssu', 'sdssg', 'sdssr', 'sdssi']
+    elif fitbands == 'bessell':
+        bandlisttofit = ['bessellb', 'bessellv', 'bessellr', 'besselli']
+    elif fitbands == 'csp':
+        bandlisttofit = ['cspu','cspb','cspv3009','cspr','cspi',
+                         'cspyd','cspjd','csphd','cspk']
+    elif fitbands == 'ir':
+        bandlisttofit = ['cspyd', 'cspjd', 'csphd', 'cspk']
+    elif fitbands.startswith('opt'):
+        bandlisttofit = ['cspb', 'cspv3009', 'cspr', 'cspi',
+                         'bessellb', 'bessellv', 'besselr', 'besselli',
+                         'sdssu', 'sdssg', 'sdssr', 'sdssi']
+    elif fitbands=='all':
+        bandlisttofit = bandlist
+    else:
+        raise exceptions.RuntimeError(
+            "fitbands must be from ['sdss','csp','ir','opt','all']")
+
+    fitbandlist = [band for band in bandlisttofit
+                   if band in bandlist]
+    print "Fitting to bands %s" % ','.join(fitbandlist)
+
     # read in the metadata, including salt2 fit parameters
+    lowzlc.fitmodel(fitbands=fitbandlist)
+    lowzlc.plot_lightcurve(
+        fixedx1c=False, bands=bandlist,
+        figtext='%s\nfit to %s bands'%(lowzname, fitbands))
+    pl.savefig('/Users/rodney/Desktop/%s_%s_salt2irfit.png' %
+               (lowzname, fitbands))
 
-    # evaluate the SALT2ir model for the given redshift, x1, c
-    salt2irmodeldir = os.path.join(modeldir, salt2irsubdir)
-
-    salt2irmodel = sncosmo.models.SALT2Source(modeldir=salt2irmodeldir,
-                                              name='salt2ir')
-
-    lowzlc.plot_lightcurve(modeldir=salt2irmodeldir)
 
 
