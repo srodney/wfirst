@@ -55,19 +55,25 @@ __LOWZNAMELIST__ = np.array([
 class LowzLightCurve(Table):
     def __init__(self, name,
                  datadir='/Users/rodney/Dropbox/WFIRST/SALT2IR/lightcurve_data',
-                 metadatadir='/Users/rodney/Dropbox/WFIRST/SALT2IR/lowzIa'):
+                 metadatadir='/Users/rodney/Dropbox/WFIRST/SALT2IR/lowzIa',
+                 magerrfloor=0.01):
         """
+        :param magerrfloor: set a min magnitude error to be applied to all
+        bands
         :return: a light curve object with a table of light curve data stored
         in the '.lcdata' property
+
         """
         self.name = name.lower()
         self.snid = name.lstrip('sn')
         self.propername = 'SN' + self.snid
         self.model_fixedx1c = None
         self.model_fitted = None
+        self.fitbands = None
+        self.magerrfloor = magerrfloor
 
         if datadir.endswith('.osc'):
-            # Loading Open SN Catalog data in JSON format
+            # Loading Open SN Catalog data in JSON formatas
             jsondatafilename = os.path.join(
                 datadir, self.propername + '.json')
             if os.path.exists(jsondatafilename):
@@ -93,7 +99,7 @@ class LowzLightCurve(Table):
                 'band': self.band, 'magsys': self.magsys, 'zpt':self.zpt})
 
         self.metadatafilename = None
-        for survey in ['CSP','CfA','ESO','LCO','LOSS',]:
+        for survey in ['CSP','CfA','ESO','LCO','LOSS','CTIO']:
             metadatafilename = os.path.join(metadatadir,
                                             name + '_%s.dat' % survey)
             if os.path.exists(metadatafilename):
@@ -204,6 +210,17 @@ class LowzLightCurve(Table):
             magsyslist.append(magsys)
         self.band = np.array(newbandnames)
         self.magsys = np.array(magsyslist)
+
+        if self.magerrfloor:
+            ismallerr = np.where(self.magerr<self.magerrfloor)[0]
+            igooderr = np.where(self.magerr>self.magerrfloor)[0]
+            for ise in ismallerr:
+                ithisband = np.where(self.band == self.band[ise])[0]
+                igood = np.array([i for ige in igooderr if ige in ithisband])
+                if len(igood)>0:
+                    self.magerr[ise] = np.median(self.magerr[igood])
+                else:
+                    self.magerr[ise] = self.magerrfloor
         return
 
 
@@ -221,7 +238,9 @@ class LowzLightCurve(Table):
         # limit the fit to specific bands if requested
         if fitbands is None:
             datatofit = self.lcdata
+            self.fitbands = np.unique(self.lcdata['band'])
         else:
+            self.fitbands = fitbands
             if isinstance(fitbands, basestring):
                 fitbands = [fitbands]
             itofit = np.array([], dtype=int)
@@ -267,52 +286,98 @@ class LowzLightCurve(Table):
         sncosmo.plot_lc(self.lcdata, model=model, **kwargs)
 
 
-def mk_lightcurve_fig(lowzname, fitbands='all'):
+def mk_lightcurve_fig(lowzsn, fitbands='all', clobber=False,
+                      savefig=False, **plotlckwargs):
     """ Make a figure showing the observed light curve of the given low-z
     Type Ia SN, compared to the light curve from the SALT2ir model for the
     (best-fit) x1, c values appropriate to that SN.
     """
 
-    if lowzname not in __LOWZNAMELIST__:
-        print("I don't know about %s" % lowzname)
-
-    # read in the observed light curve data
-    lowzlc = LowzLightCurve(lowzname)
-
-    bandlist = np.unique(lowzlc.band)
-    if isinstance(fitbands, list):
-        bandlisttofit = fitbands
-        fitbands = ','.join(fitbands)
-    elif fitbands == 'sdss':
-        bandlisttofit = ['sdssu', 'sdssg', 'sdssr', 'sdssi']
-    elif fitbands == 'bessell':
-        bandlisttofit = ['bessellb', 'bessellv', 'bessellr', 'besselli']
-    elif fitbands == 'csp':
-        bandlisttofit = ['cspu','cspb','cspv3009','cspr','cspi',
-                         'cspyd','cspjd','csphd','cspk']
-    elif fitbands == 'ir':
-        bandlisttofit = ['cspyd', 'cspjd', 'csphd', 'cspk']
-    elif fitbands.startswith('opt'):
-        bandlisttofit = ['cspb', 'cspv3009', 'cspr', 'cspi',
-                         'bessellb', 'bessellv', 'besselr', 'besselli',
-                         'sdssu', 'sdssg', 'sdssr', 'sdssi']
-    elif fitbands=='all':
-        bandlisttofit = bandlist
+    if isinstance(lowzsn, basestring):
+        if lowzsn not in __LOWZNAMELIST__:
+            print("I don't know about %s" % lowzsn)
+        # read in the observed light curve data
+        lowzlc = LowzLightCurve(lowzsn)
+    elif isinstance(lowzsn, Table):
+        lowzlc = lowzsn
     else:
         raise exceptions.RuntimeError(
-            "fitbands must be from ['sdss','csp','ir','opt','all']")
+            'Give me a string or a LowzLightCurve object')
 
-    fitbandlist = [band for band in bandlisttofit
-                   if band in bandlist]
-    print "Fitting to bands %s" % ','.join(fitbandlist)
+    bandlist = np.unique(lowzlc.band)
+    if lowzlc.model_fitted is None or clobber:
+        if isinstance(fitbands, list):
+            bandlisttofit = fitbands
+            fitbands = ','.join(fitbands)
+        elif fitbands == 'sdss':
+            bandlisttofit = ['sdssu', 'sdssg', 'sdssr', 'sdssi']
+        elif fitbands == 'bessell':
+            bandlisttofit = ['bessellb', 'bessellv', 'bessellr', 'besselli']
+        elif fitbands == 'csp':
+            bandlisttofit = ['cspu','cspb','cspv3009','cspr','cspi',
+                             'cspyd','cspjd','csphd','cspk']
+        elif fitbands == 'ir':
+            bandlisttofit = ['cspyd', 'cspjd', 'csphd', 'cspk']
+        elif fitbands.startswith('opt'):
+            bandlisttofit = ['cspb', 'cspv3009', 'cspr', 'cspi',
+                             'bessellb', 'bessellv', 'besselr', 'besselli',
+                             'sdssu', 'sdssg', 'sdssr', 'sdssi']
+        elif fitbands=='all':
+            bandlisttofit = bandlist
+        else:
+            raise exceptions.RuntimeError(
+                "fitbands must be from ['sdss','csp','ir','opt','all']")
 
-    # read in the metadata, including salt2 fit parameters
-    lowzlc.fitmodel(fitbands=fitbandlist)
-    lowzlc.plot_lightcurve(
-        fixedx1c=False, bands=bandlist,
-        figtext='%s\nfit to %s bands'%(lowzname, fitbands))
-    pl.savefig('/Users/rodney/Desktop/%s_%s_salt2irfit.png' %
-               (lowzname, fitbands))
+        fitbandlist = [band for band in bandlisttofit
+                       if band in bandlist]
+        dofit=True
+    else:
+        fitbandlist = lowzlc.fitbands
+        dofit=False
+
+    bandliststr = ''
+    iwaveorder = np.argsort([sncosmo.get_bandpass(bandname).wave_eff
+                             for bandname in fitbandlist])
+    for bandname in np.array(fitbandlist)[iwaveorder]:
+        if bandname.startswith('bessell'):
+            bandliststr += bandname.upper().rstrip('X')[7:]
+        elif bandname.startswith('csp'):
+            bandliststr += bandname.upper().rstrip('DS')[3:]
+        elif bandname.startswith('sdss'):
+            bandliststr += bandname[4:]
+        else:
+            bandliststr += bandname.upper()
+    if savefig:
+        fname = '/Users/rodney/Desktop/sn%s_%s_salt2irfit.png' % (
+            lowzlc.name, bandliststr)
+    else:
+        fname = None
+
+    if fname is not None and os.path.isfile(fname) and not clobber:
+        print("%s exists. Not clobbering." % fname)
+    if dofit:
+        print "Fitting to bands %s" % ','.join(fitbandlist)
+        # read in the metadata, including salt2 fit parameters
+        lowzlc.fitmodel(fitbands=fitbandlist)
+
+    plotlcdefaults = dict(
+        figtext='SN %s\nSALT2IR fit to:\n%s'%(lowzlc.name, bandliststr),
+        bands=bandlist, cmap_lims=(2500,20000), zp=25.0, zpsys='ab',
+        pulls=True, errors=None, ncol=3, figtextsize=1.0,
+        model_label='salt2ir', show_model_params=True,
+        tighten_ylim=True, color=None, fname=fname)
+    plotlcdefaults.update(**plotlckwargs)
+
+    lowzlc.plot_lightcurve(fixedx1c=False, **plotlcdefaults)
+    return
 
 
+def mk_all_lightcurve_fit_figs(
+        outfilename='/Users/rodney/Desktop/lowzIa_salt2ir_fits.pdf'):
+    from matplotlib.backends.backend_pdf import PdfPages
+    pp = PdfPages(outfilename)
 
+    for name in __LOWZNAMELIST__:
+        mk_lightcurve_fig(name, savefig=True, clobber=False,
+                          fname=pp, format='pdf')
+    pp.close()
