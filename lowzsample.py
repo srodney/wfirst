@@ -13,6 +13,7 @@ import sncosmo
 from scipy import integrate as scint, interpolate as scinterp, optimize as scopt
 import exceptions
 import json
+import cPickle
 
 _B_WAVELENGTH = 4302.57
 _V_WAVELENGTH = 5428.55
@@ -23,6 +24,12 @@ if 'ipython' in __THISFILE__ :
 __THISPATH__ = os.path.abspath(os.path.dirname(__THISFILE__))
 __THISDIR__ = os.path.abspath(os.path.dirname(__THISFILE__))
 
+def is_number(s):
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
 
 __LOWZNAMELIST__ = np.array([
     'sn1998bu', 'sn1999cl', 'sn1999cp', 'sn1999ee', 'sn1999ek',
@@ -106,6 +113,8 @@ class LowzLightCurve(Table):
                 self.metadatafilename = metadatafilename
                 self.get_metadata_from_file()
                 break
+        self.datatofit = self.lcdata
+
 
     def get_metadata_from_file(self):
         # TODO: read in the metadata file and get the salt2 fit parameters
@@ -117,6 +126,8 @@ class LowzLightCurve(Table):
                 break
             key = dline.lstrip('#').split()[0]
             val = dline.lstrip('#').split()[-1]
+            if is_number(val):
+                val = float(val)
             self.__dict__[key] = val
 
     def rd_datfile(self):
@@ -132,6 +143,7 @@ class LowzLightCurve(Table):
         self.instrument = lcdata['instr']
         self.band = lcdata['band']
         self.reformat_data()
+
 
     def rd_jsonfile(self):
         """ Read in the light curve data from a .json file provided by the
@@ -161,7 +173,7 @@ class LowzLightCurve(Table):
                                    dtype=basestring)
         self.reformat_data()
 
-    def reformat_data(self, segregatecsp=False):
+    def reformat_data(self, segregatecsp=False, mjdtrim=False):
         """ Reformat the data that has been read in from a data file.
         * Fix the passband names to conform to the sncosmo names
         * assign to a photometric system (Vega or AB) based on band name
@@ -188,6 +200,11 @@ class LowzLightCurve(Table):
                          bandname += 'd'
                  elif bandname[-1] == 'v':
                      bandname += '3009'
+            # elif 'lco' in self.instrument[i].lower() and bandi[0] in 'YJHK':
+            #     bandname = 'csp' + bandi[0].lower()
+            #     if bandi[0] != 'K':
+            #         bandname += 'd'
+            #     magsys = 'AB'
             elif bandi in ['U','UX']:
                 bandname = 'bessellux'
                 magsys = 'Vega'
@@ -216,7 +233,7 @@ class LowzLightCurve(Table):
             igooderr = np.where(self.magerr>self.magerrfloor)[0]
             for ise in ismallerr:
                 ithisband = np.where(self.band == self.band[ise])[0]
-                igood = np.array([i for ige in igooderr if ige in ithisband])
+                igood = np.array([i for i in igooderr if i in ithisband])
                 if len(igood)>0:
                     self.magerr[ise] = np.median(self.magerr[igood])
                 else:
@@ -225,51 +242,106 @@ class LowzLightCurve(Table):
 
 
     def fitmodel(self, modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
-                 salt2subdir='salt2ir', fitbands=None):
+                 salt2subdir='salt2ir', useknownx1c=False):
         """ fit a new model to the data
         :param modeldir:
         :return:
         """
-        salt2irmodeldir = os.path.join(modeldir, salt2subdir)
-        salt2irsource = sncosmo.models.SALT2Source(
-            modeldir=salt2irmodeldir, name=salt2subdir)
-        salt2irmodel = sncosmo.Model(source=salt2irsource)
+        salt2modeldir = os.path.join(modeldir, salt2subdir)
+        salt2source = sncosmo.models.SALT2Source(
+            modeldir=salt2modeldir, name=salt2subdir)
+        salt2model = sncosmo.Model(source=salt2source)
 
-        # limit the fit to specific bands if requested
+        if useknownx1c:
+            if 'salt2x1' not in self.__dict__:
+                print("No SALT2 fitres data available for this SN."
+                      " No predefined model")
+                self.model_fitted = None
+                salt2model.set(z=self.z, x1=0, c=0.1)
+            else:
+                # evaluate the SALT2 model for the given redshift, x1, c
+                salt2model.set(z=self.z, t0=self.TBmax,
+                                 x1=self.salt2x1, c=self.salt2c)
+                salt2model.set_source_peakabsmag(-19.3, 'bessellb','AB')
+
+                # fit the model without allowing x1 and c to vary
+                res, model_fixedx1c = sncosmo.fit_lc(
+                    self.datatofit, salt2model, ['t0', 'x0'], bounds={})
+                self.model_fitted = model_fixedx1c
+        else:
+            # fit the model allowing all parameters to vary
+            res, model_fitted = sncosmo.fit_lc(
+                self.datatofit, salt2model, ['t0', 'x0', 'x1', 'c'],
+                bounds={'x1':[-5,5], 'c':[-0.5,1.5]})
+            self.model_fitted = model_fitted
+
+
+    def trim_data_for_fitting(self, fitbands=None, mjdtrim=True):
+        """
+        :param fitbands: list of bands (or name of a set of bands) to be used
+        in the fitting.
+        :param mjdtrim: If True, trim the data to the rest-frame time
+        range of [-10,+45]
+        :return:
+        """
+        if fitbands is not None:
+            print "SN %s : limiting fitting data to bands %s" % (
+                self.name, ','.join(fitbands))
+        if mjdtrim:
+            print "SN %s : limiting fitting data to -10<t<+45" % self.name
+
+        #TODO: clean up the MJD and band data trimming !
+        if mjdtrim:
+
+            # find the date of peak brightness by taking the median of the
+            # peak mag epoch from all bands
+            mjdpklist = []
+            for band in np.unique(self.band):
+                bandwave = sncosmo.get_bandpass(band).wave_eff
+                if bandwave > 7000: continue
+                if bandwave < 3000: continue
+                ithisband = np.where((self.band==band) &
+                                     (self.magerr>0) &
+                                     (self.mag/self.magerr > 5))[0]
+                ipeak = np.argmin(self.mag[ithisband])
+                mjdpklist.append(self.mjd[ipeak])
+            if len(mjdpklist):
+                mjdpk = np.mean(mjdpklist)
+            else:
+                mjdpk = self.mjd[np.argmin(self.mag)]
+            # limit the fit to epochs prior to +45 days
+            trest = (self.mjd-mjdpk)/(1+self.z)
+            iinside = np.where((trest>-10) & (trest<45))[0]
+            ioutside = np.where((trest<-10) | (trest>45))[0]
+            self.lcdata.remove_rows(ioutside)
+            self.mjd = self.mjd[iinside]
+            self.band = self.band[iinside]
+            self.mag = self.mag[iinside]
+            self.magerr = self.magerr[iinside]
+            self.flux = self.flux[iinside]
+            self.fluxerr = self.fluxerr[iinside]
+            self.magsys = self.magsys[iinside]
+            self.zpt = self.zpt[iinside]
+
+        # else:
+        #     iinside = np.arange(len(self.mjd))
+
+
+        # and limit the fit to specific bands if requested
         if fitbands is None:
-            datatofit = self.lcdata
-            self.fitbands = np.unique(self.lcdata['band'])
+            self.fitbands = np.unique(self.band)
+            ibandok = np.arange(len(self.band))
         else:
             self.fitbands = fitbands
             if isinstance(fitbands, basestring):
                 fitbands = [fitbands]
-            itofit = np.array([], dtype=int)
+            ibandok = np.array([], dtype=int)
             for fitband in fitbands:
                 ithisband = np.where(self.band == fitband)[0]
-                itofit = np.append(itofit, ithisband)
-            datatofit = self.lcdata[itofit]
+                ibandok = np.append(ibandok, ithisband)
 
-        if 'salt2x1' not in self.__dict__:
-            print("No SALT2 fitres data available for this SN."
-                  " No predefined model")
-            self.model_fixedx1c = None
-            salt2irmodel.set(z=self.z, x1=0, c=0.1)
-        else:
-            # evaluate the SALT2 model for the given redshift, x1, c
-            salt2irmodel.set(z=self.z, t0=self.TBmax,
-                             x1=self.salt2x1, c=self.salt2c)
-            salt2irmodel.set_source_peakabsmag(-19.3, 'bessellb','AB')
-
-            # fit the model without allowing x1 and c to vary
-            res, model_fixedx1c = sncosmo.fit_lc(
-                datatofit, salt2irmodel, ['t0', 'x0'], bounds={})
-            self.model_fixedx1c = model_fixedx1c
-
-        # fit the model allowing all parameters to vary
-        res, model_fitted = sncosmo.fit_lc(
-            datatofit, salt2irmodel, ['t0', 'x0', 'x1', 'c'],
-            bounds={'x1':[-3,3], 'c':[-0.5,0.5]})
-        self.model_fitted = model_fitted
+        # itofit = np.array([i for i in iinside if i in ibandok])
+        self.datatofit = self.lcdata[ibandok]
 
 
     def plot_lightcurve(self, fixedx1c=False, **kwargs):
@@ -286,7 +358,7 @@ class LowzLightCurve(Table):
         sncosmo.plot_lc(self.lcdata, model=model, **kwargs)
 
 
-def mk_lightcurve_fig(lowzsn, fitbands='all', clobber=False,
+def mk_lightcurve_fig(lowzsn, fitbandset='all', usesalt2ir=True, clobber=False,
                       savefig=False, **plotlckwargs):
     """ Make a figure showing the observed light curve of the given low-z
     Type Ia SN, compared to the light curve from the SALT2ir model for the
@@ -306,23 +378,26 @@ def mk_lightcurve_fig(lowzsn, fitbands='all', clobber=False,
 
     bandlist = np.unique(lowzlc.band)
     if lowzlc.model_fitted is None or clobber:
-        if isinstance(fitbands, list):
-            bandlisttofit = fitbands
-            fitbands = ','.join(fitbands)
-        elif fitbands == 'sdss':
+        if isinstance(fitbandset, list):
+            bandlisttofit = fitbandset
+        elif fitbandset == 'sdss':
             bandlisttofit = ['sdssu', 'sdssg', 'sdssr', 'sdssi']
-        elif fitbands == 'bessell':
+        elif fitbandset == 'bessell':
             bandlisttofit = ['bessellb', 'bessellv', 'bessellr', 'besselli']
-        elif fitbands == 'csp':
+        elif fitbandset == 'csp':
             bandlisttofit = ['cspu','cspb','cspv3009','cspr','cspi',
                              'cspyd','cspjd','csphd','cspk']
-        elif fitbands == 'ir':
+        elif fitbandset == 'ir':
             bandlisttofit = ['cspyd', 'cspjd', 'csphd', 'cspk']
-        elif fitbands.startswith('opt'):
+        elif fitbandset in ['opt', 'optical']:
             bandlisttofit = ['cspb', 'cspv3009', 'cspr', 'cspi',
                              'bessellb', 'bessellv', 'besselr', 'besselli',
                              'sdssu', 'sdssg', 'sdssr', 'sdssi']
-        elif fitbands=='all':
+        elif fitbandset.lower() in ['oir','optir','bvrjhk']:
+            bandlisttofit = ['bessellb', 'bessellv', 'bessellr',
+                             'sdssg','sdssr',
+                             'cspjd', 'csphd', 'cspk']
+        elif fitbandset== 'all':
             bandlisttofit = bandlist
         else:
             raise exceptions.RuntimeError(
@@ -356,28 +431,50 @@ def mk_lightcurve_fig(lowzsn, fitbands='all', clobber=False,
     if fname is not None and os.path.isfile(fname) and not clobber:
         print("%s exists. Not clobbering." % fname)
     if dofit:
-        print "Fitting to bands %s" % ','.join(fitbandlist)
         # read in the metadata, including salt2 fit parameters
-        lowzlc.fitmodel(fitbands=fitbandlist)
+        lowzlc.trim_data_for_fitting(mjdtrim=True, fitbands=fitbandlist)
+        if usesalt2ir:
+            salt2subdir='salt2ir'
+        else:
+            salt2subdir='salt2-4'
+        lowzlc.fitmodel(salt2subdir=salt2subdir)
 
     plotlcdefaults = dict(
-        figtext='SN %s\nSALT2IR fit to:\n%s'%(lowzlc.name, bandliststr),
+        figtext='SN %s\n%s fit to:\n%s'%(
+            lowzlc.name, salt2subdir, bandliststr),
         bands=bandlist, cmap_lims=(2500,20000), zp=25.0, zpsys='ab',
         pulls=True, errors=None, ncol=3, figtextsize=1.0,
-        model_label='salt2ir', show_model_params=True,
+        model_label=salt2subdir, show_model_params=True,
         tighten_ylim=True, color=None, fname=fname)
     plotlcdefaults.update(**plotlckwargs)
 
     lowzlc.plot_lightcurve(fixedx1c=False, **plotlcdefaults)
+
+    fig = pl.gcf()
+    for ax in fig.axes:
+        ax.set_xlim(-12, 47)
     return
 
 
 def mk_all_lightcurve_fit_figs(
+        snlist=None, usesalt2ir=True, fitbands='optir',
         outfilename='/Users/rodney/Desktop/lowzIa_salt2ir_fits.pdf'):
+    """ Make a single output pdf file showing summary light curve fits
+    for all the SNe in the low-z sample, using the salt2ir model.
+    :param outfilename:
+    :return:
+    """
     from matplotlib.backends.backend_pdf import PdfPages
     pp = PdfPages(outfilename)
+    if snlist is None:
+        print "No list of fitted SNe provided, so fitting on the fly"
+        snlist = __LOWZNAMELIST__
 
-    for name in __LOWZNAMELIST__:
-        mk_lightcurve_fig(name, savefig=True, clobber=False,
+    pl.ioff()
+    for sn in snlist:
+        mk_lightcurve_fig(sn, savefig=True, clobber=False,
+                          usesalt2ir=usesalt2ir, fitbandset=fitbands,
                           fname=pp, format='pdf')
     pp.close()
+    pl.ion()
+
