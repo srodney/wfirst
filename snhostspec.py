@@ -13,53 +13,126 @@ import numpy as np
 from glob import glob
 from matplotlib import pyplot as plt
 
-class WfirstSimData(Table):
+class WfirstHostCatalog(Table):
 
-    def __init__(self, fitsfilename, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         super(Table, self).__init__(*args, **kwargs)
 
-        hdulist = fits.open(fitsfilename)
-        bindata = hdulist[1].data
-        self.zsim = bindata['SIM_REDSHIFT_HOST']
-        if 'HOSTGAL_MAG_H' in [col.name for col in bindata.columns]:
-            self.mag = bindata['HOSTGAL_MAG_H']
-        else:
-            self.mag = bindata['HOSTGAL_MAG_J']
+    def mkcatfile(self, snanasimdir='SNANA.SIM.OUTPUT'):
+        """Make a master catalog file to hold SN host galaxy data:
+         # redshift hostmag matchid sedsimfile snrsimfile snrmed
+         """
+        simlist = []
+        simfilelist_med = glob(
+            os.path.join(snanasimdir, '*Z08*HEAD.FITS'))
+        simfilelist_deep = glob('SNANA.SIM.OUTPUT/*Z17*HEAD.FITS')
+        hostz_med, hostmag_med = np.array([]), np.array([])
+        for simfile in simfilelist_med:
+            sim = WfirstSimData(simfile)
+            sim.load_matchdata('3DHST/3dhst_master.phot.v4.1.cat.FITS')
+            sim.get_matchlists()
+            hostz_med = np.append(hostz_med, sim.zsim)
+            hostmag_med = np.append(hostmag_med, sim.mag)
+            simlist.append(sim)
 
-        self.matchdata = None
-        self.imatch = None
-        self.mag3D = None
-        self.id3D = None
-        self.z3D = None
+        hostz_deep, hostmag_deep = np.array([]), np.array([])
+        for simfile in simfilelist_deep:
+            sim = WfirstSimData(simfile)
+            sim.load_matchdata('3DHST/3dhst_master.phot.v4.1.cat.FITS')
+            sim.get_matchlists()
+            hostz_deep = np.append(hostz_deep, sim.zsim)
+            hostmag_deep = np.append(hostmag_deep, sim.mag)
+            simlist.append(sim)
+
+
+        return(simlist)
+
+
+
+class WfirstSimData(object):
+
+    def __init__(self, infilename=None, verbose=1, *args, **kwargs):
+        # TODO: make this inherit Table properties, so we can treat it as a table directly
+        # super(Table, self).__init__(*args, **kwargs)
+        self.verbose = verbose
+        self.matchdata = Table()
+        self.simdata = Table()
         self.eazydata = {}
+        if infilename:
+            self.read(infilename, *args, **kwargs)
+        elif self.verbose:
+            print("Initiliazed an empty WfirstSimData object")
+        return
+
+    def read(self, infilename, format='snana',
+             **kwargs):
+            """read in a catalog of SN host galaxy data.
+            Initialize a new catalog from a SNANA data.fits file
+            (using format='snana') or
+            load a modified catalog using the astropy table reading functions.
+            Additional keywords are passed to the astropy.io.ascii.read
+            function.
+            """
+            if format.lower() == 'snana':
+                hdulist = fits.open(infilename)
+                bindata = hdulist[1].data
+                zsim = bindata['SIM_REDSHIFT_HOST']
+                if 'HOSTGAL_MAG_H' in [col.name for col in bindata.columns]:
+                    magsim = bindata['HOSTGAL_MAG_H']
+                else:
+                    magsim = bindata['HOSTGAL_MAG_J']
+                self.simdata.add_column(
+                    Table.Column(data=magsim, name='magsim'))
+                self.simdata.add_column(Table.Column(data=zsim, name='zsim'))
+            else:
+                # read a processed catalog from some other data format.
+                self.simdata.read(infilename, format=format, **kwargs)
+
+
+    def write(self, outfilename, format='ascii.commented_header', **kwargs):
+        """write out the catalog of SN host galaxy data
+        Columns in the catalog will vary, depending on what other host gal
+        simulation data have been collected and added to the table.
+        Additional keywords are passed to the astropy.io.ascii.write
+        function.
+        """
+        self.simdata.write(outfilename, format=format, **kwargs)
 
 
     def load_matchdata(self, matchcatfilename=None):
         """Load a 3DHST catalog to identify galaxies that match the
         properties of the SN host galaxies.
         """
+        if len(self.matchdata) > 0:
+            print("SNANA sim outputs already matched to 3DHST." +
+                  "No changes done.")
+            return
+
         if matchcatfilename is None:
             matchcatfilename = ('3DHST/3dhst_master.phot.v4.1/'
                                 '3dhst_master.phot.v4.1.cat.FITS')
 
-        if self.matchdata is None:
-            # load the 3dHST catalog
-            self.matchdata = fits.getdata(matchcatfilename)
+        # load the 3dHST catalog
+        matchdata = fits.getdata(matchcatfilename)
 
-        f160 = self.matchdata['f_F160W']
-        zspec = self.matchdata['z_spec']
-        zphot = self.matchdata['z_peak']
+        f160 = matchdata['f_F160W']
+        zspec = matchdata['z_spec']
+        zphot = matchdata['z_peak']
         zbest = np.where(zspec>0, zspec, zphot)
-        usephot = self.matchdata['use_phot']
+        usephot = matchdata['use_phot']
         ivalid = np.where(((f160>0) & (zbest>0)) & (usephot==1) )[0]
         isort = np.argsort(zbest[ivalid])
 
-        self.z3D = zbest[ivalid][isort]
-        idgal = self.matchdata['id'][ivalid][isort].astype(int)
-        field = self.matchdata['field'][ivalid][isort]
-        self.id3D = np.array(['{}.{:04d}'.format(field[i], idgal[i])
-                              for i in range(len(field))])
-        self.mag3D = (-2.5 * np.log10(f160[ivalid]) + 25)[isort]
+        z3d = zbest[ivalid][isort]
+        idgal = matchdata['id'][ivalid][isort].astype(int)
+        field = matchdata['field'][ivalid][isort]
+        mag3d = (-2.5 * np.log10(f160[ivalid]) + 25)[isort]
+        id3d = np.array(['{}.{:04d}'.format(field[i], idgal[i])
+                         for i in range(len(field))])
+
+        self.matchdata.add_column(Table.Column(data=z3d, name='z3D'))
+        self.matchdata.add_column(Table.Column(data=mag3d, name='mag3D'))
+        self.matchdata.add_column(Table.Column(data=id3d, name='id3D'))
         return
 
 
@@ -70,22 +143,32 @@ class WfirstSimData(Table):
         mag."""
         if self.matchdata is None:
             self.load_matchdata()
+        zsim = self.simdata['zsim']
+        magsim= self.simdata['magsim']
+        zmatch = self.matchdata['z3D']
+        magmatch = self.matchdata['mag3D']
+        idmatch = self.matchdata['id3D']
+
         # TODO: find the nearest 10 or 100 galaxies, instead of all within
         # a specified dz and dmag range.
         allmatch_indexlist = np.array(
-            [np.where((self.z3D + dz > self.zsim[i]) &
-                      (self.z3D - dz < self.zsim[i]) &
-                      (self.mag3D + dmag > self.mag[i]) &
-                      (self.mag3D - dz < self.mag[i]))[0]
-             for i in range(len(self.zsim))])
-        self.nmatch = np.array([len(allmatch_indexlist[i])
-                                for i in range(len(self.zsim))])
+            [np.where((zmatch + dz > zsim[i]) &
+                      (zmatch - dz < zsim[i]) &
+                      (magmatch + dmag > magsim[i]) &
+                      (magmatch - dz < magsim[i]))[0]
+             for i in range(len(zsim))])
+        nmatch = np.array([len(allmatch_indexlist[i])
+                                for i in range(len(zsim))])
 
-        self.allmatchids = np.array([self.id3D[allmatch_indexlist[i]]
-                                     for i in range(len(self.zsim))])
+        allmatchids = np.array([idmatch[allmatch_indexlist[i]]
+                                for i in range(len(zsim))])
 
-        self.matchid = np.array([np.random.choice(self.allmatchids[i])
-                                 for i in range(len(self.zsim))])
+        matchid = np.array([np.random.choice(allmatchids[i])
+                                 for i in range(len(zsim))])
+
+        # TODO: don't use add_column... we should update columns if they already exist.
+        self.simdata.add_column(Table.Column(data=matchid, name='matchid'))
+        self.simdata.add_column(Table.Column(data=nmatch, name='nmatch'))
 
 
     def load_sed_data(self):
@@ -99,15 +182,20 @@ class WfirstSimData(Table):
     def simulate_seds(self):
         """Use Gabe Brammer's EAZY code to simulate the host gal SED """
 
-        for isim in range(len(self.matchid)):
-            fieldidx = self.matchid[isim]
+        sedsimfilelist = []
+        for isim in range(len(self.simdata['matchid'])):
+            fieldidx = self.simdata['matchid'][isim]
             fieldstr, idxstr = fieldidx.split('.')
             field = fieldstr.lower().replace('-', '')
             thiseazydat = self.eazydata[field]
-            simsedfilename = ('3DHST/sedsim.output/' +
+            sedsimfilename = ('3DHST/sedsim.output/' +
                               'wfirst_simsed.{:s}.dat'.format(fieldidx))
             simulate_eazy_sed( fieldidx=fieldidx, eazydata=thiseazydat,
-                               savetofile=simsedfilename)
+                               savetofile=sedsimfilename)
+            sedsimfilelist.append(sedsimfilename)
+        self.simdata.add_column(
+            Table.Column(data=sedsimfilelist, name='sedsimfile'))
+
 
 
 class SubaruSpecSim(Table):

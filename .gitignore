@@ -16,6 +16,8 @@ htmlcov
 .coverage
 MANIFEST
 
+.ipynb*
+
 # Sphinx
 docs/api
 docs/_build
