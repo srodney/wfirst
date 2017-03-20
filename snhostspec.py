@@ -293,22 +293,24 @@ class WfirstSimData(object):
             indexlist = np.arange(len(self.simdata['zsim']))
         for idx in indexlist:
             for et in exposuretimelist:
-                if self.verbose:
-                    print(
-                        "Running the PFS ETC for "
-                        "{:s} at z {:.2f} with mag {:.2f}"
-                        "for {:d} hrs, sedfile {:s}".format(
-                            self.simdata['idmatch'][idx],
-                            self.simdata['zmatch'][idx],
-                            self.simdata['magmatch'][idx],
-                            et, self.simdata['sedoutfile'][idx]))
                 defaultsfile = os.path.join(
                     '/Users/rodney/src/wfirst',
                     'wfirst_subarupfsetc.{:d}hr.defaults'.format(et))
                 sedoutfile = self.simdata['sedoutfile'][idx]
-                snroutfile = "etcout/subaruPFS_SNR_{:s}_z{:.2f}_m{:.2f}.dat".format(
+                snroutfile = "etcout/subaruPFS_SNR_{:s}_z{:.2f}_m{:.2f}_{:d}hrs.dat".format(
                     self.simdata['idmatch'][idx], self.simdata['zmatch'][idx],
-                    self.simdata['magmatch'][idx])
+                    self.simdata['magmatch'][idx], et)
+                if self.verbose:
+                    print(
+                        "Running the PFS ETC for "
+                        "{:s} at z {:.2f} with mag {:.2f}"
+                        "for {:d} hrs, sedfile {:s}.\n output: {:s}".format(
+                            self.simdata['idmatch'][idx],
+                            self.simdata['zmatch'][idx],
+                            self.simdata['magmatch'][idx],
+                            et, self.simdata['sedoutfile'][idx], snroutfile))
+
+
                 start = time.time()
                 etcerr = subprocess.call(["python",
                                           "/Users/rodney/src/subarupfsETC/run_etc.py",
