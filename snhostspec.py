@@ -310,7 +310,6 @@ class WfirstSimData(object):
                             self.simdata['magmatch'][idx],
                             et, self.simdata['sedoutfile'][idx], snroutfile))
 
-
                 start = time.time()
                 etcerr = subprocess.call(["python",
                                           "/Users/rodney/src/subarupfsETC/run_etc.py",
@@ -325,24 +324,106 @@ class WfirstSimData(object):
 
 
 
-class SubaruSpecSim(Table):
+class SubaruObsSim(object):
     """ a class for handling the output of the C.Hirata SubaruPFS ETC code
     """
-    def __init__(self, etcoutfilename, *args, **kwargs):
-        super(Table, self).__init__(*args, **kwargs)
-
+    # TODO: record metadata in the .dat file header and read it in here
+    # TODO:  better yet--- use a fits bintable instead of an ascii file.
+    def __init__(self, etcoutfilename, verbose=1):
+        # super(Table, self).__init__(*args, **kwargs)
+        # KLUDGE!  parsing filename to get redshift, host mag and exptime
+        filenameparselist = os.path.basename(etcoutfilename).split('_')
+        self.matchid = filenameparselist[2]
+        self.z = float(filenameparselist[3][1:])
+        self.mag = float(filenameparselist[4][1:])
+        self.exptime_hours = float(filenameparselist[5].strip('hrs.dat'))
+        self.exptime_seconds = self.exptime_hours * 3600
         etcoutdata = ascii.read(etcoutfilename, format='basic',
                                 names=['arm', 'pix', 'wave','snpix',
                                        'signal_exp', 'var0', 'var',
                                        'mAB', 'flux_conversion',
                                        'samplingfactor', 'skybg'])
 
-        self.wave = etcoutdata['wave']
+        self.wave_obs = etcoutdata['wave']
+        self.wave_rest = self.wave_obs / (1 + self.z)
         self.signaltonoise = etcoutdata['snpix']
+        self.specsim = None
+        self.verbose = verbose
 
 
-    def check_line_detection(self, snthresh=5):
-        """Test whether an emission line is detected """
+    def load_specdata(self, specdatadir='3DHST/sedsim.output'):
+        """ read in the simulated spectrum data, generated with EAZY """
+        specsimfile = os.path.join(specdatadir,
+                                   'wfirst_simsed.{:s}.dat'.format(
+                                       self.matchid))
+        self.specsim = EazySpecSim(specsimfile)
+
+    def plot(self, frame='rest', showspec=False, **kwargs):
+        """ frame = 'rest' : show restframe wavelengths
+        """
+        ax = plt.gca()
+        if frame=='rest':
+            wsubaru = self.wave_rest
+            xlabel = 'rest-frame wavelength (nm)'
+        else:
+            wsubaru = self.wave_obs
+            xlabel = 'obs-frame wavelength (nm)'
+        ax.plot(wsubaru, self.signaltonoise, color='k', **kwargs)
+        xlab = ax.set_xlabel(xlabel)
+        ylab = ax.set_ylabel('S/N per pix with Subaru PFS')
+
+        if not showspec:
+            return
+        if self.specsim is None:
+            self.load_specdata()
+        ax2 = ax.twinx()
+        if frame=='rest':
+            weazy = self.specsim.wave / (1 + self.z)
+        else:
+            weazy = self.specsim.wave
+        ax2.plot(weazy, self.specsim.flux, color='r', **kwargs)
+        ax2.invert_yaxis()
+        ax2.set_ylabel('AB mag', color='r')
+
+
+    def check_redshift(self, snrthresh=4, showplot=False, **kwargs):
+        """Test whether a redshift can be determined from the spectrum"""
+        self.redshift_detected = False
+        self.bestsnr = 0
+        self.bestbinsize=1
+        for binsize in [2,3,4,5,6,7,8,9,10]:
+            ibinlist = np.arange(0, len(self.signaltonoise), binsize)
+            snrbinned = np.array(
+                [self.signaltonoise[ibin:ibin + binsize].sum()/np.sqrt(binsize)
+                 for ibin in ibinlist[:-1]])
+            snrbinmax = np.max(snrbinned)
+            waverestbinned = self.wave_rest[ibinlist[:-1] + binsize / 2]
+            snrbinmaxwaverest = waverestbinned[np.argmax(snrbinned)]
+            if snrbinmax>=snrthresh:
+                self.redshift_detected = True
+            if snrbinmax > self.bestsnr:
+                self.bestsnr = snrbinmax
+                self.bestsnr_waverest = snrbinmaxwaverest
+                self.bestbinsize = binsize
+
+        if self.redshift_detected and self.verbose:
+            print("Redshift detected with "
+                  "S/N={:.1f} at rest wave={:d} nm".format(
+                  self.bestsnr, int(self.bestsnr_waverest)))
+        elif self.redshift_detected is False and self.verbose:
+            print("Redshift not detected. Max "
+                  "S/N={:.1f} at rest wave={:d} nm".format(
+                  self.bestsnr, int(self.bestsnr_waverest)))
+
+        if showplot:
+            binpix = self.bestbinsize
+            ibinlist = np.arange(0, len(self.signaltonoise), binpix)
+            snrbinned = np.array(
+                [self.signaltonoise[ibin:ibin + binpix].sum() / np.sqrt(binpix)
+                 for ibin in ibinlist[:-1]])
+            waverestbinned = self.wave_rest[ibinlist[:-1] + binpix / 2]
+            ax = plt.gca()
+            ax.plot(waverestbinned, snrbinned, color='b', **kwargs)
 
 
 class EazyData(object):
