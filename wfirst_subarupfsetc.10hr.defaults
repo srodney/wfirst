@@ -17,7 +17,7 @@ REFF             0.3                #  Effective radius             [arcsec]
 LINE_FLUX        0.0                #  Emission line flux           [erg/s/cm^2]
 LINE_WIDTH       0                  #  Emission line width sigma    [km/s]
 
-NOISE_REUSED     Y                  #  Noise Vector Reused?               [Y/N] (If Y, please specify file name used in OUTFILE_NOISE)
+NOISE_REUSED     N                  #  Noise Vector Reused?               [Y/N] (If Y, please specify file name used in OUTFILE_NOISE)
 OUTFILE_NOISE    etcout/ref.noise.10hr.dat  #  Output file for noise vector       <filename>
 OUTFILE_SNC      etcout/ref.snc.10hr.dat    #  Output file for continuum S/N      <filename>
 OUTFILE_SNL      -                     #  Output file for emission line S/N  <filename>
