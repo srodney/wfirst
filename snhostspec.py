@@ -17,46 +17,9 @@ from matplotlib import pyplot as plt
 from StringIO import StringIO
 import time
 
-class WfirstMasterHostCatalog(object):
-    # TODO : make this a Table instead of an object with a Table
-    #def __init__(self, *args, **kwargs):
-    #     super(Table, self).__init__(*args, **kwargs)
-    def __init__(self):
-        """ initialize a master catalog object"""
-        self.mastercat = Table()
-        self.simlist = []
-
-    def read(self, infilename, format='commented_header', **kwargs):
-            """read in a master catalog of SN host galaxy data.
-            Load from a fits binary table or ascii table using the astropy
-            table reading functions. The given filename, format and dditional
-            keywords are passed to the astropy.io.ascii.read function.
-            """
-            # read a processed catalog from some other data format.
-            self.mastercat = ascii.read(infilename, format=format, **kwargs)
-
-    def write(self, outfilename, format='ascii.commented_header', **kwargs):
-        """write out the master catalog of SN host galaxy data
-        Additional keywords are passed to the astropy.io.ascii.write
-        function.
-        """
-        self.mastercat.write(outfilename, format=format, **kwargs)
 
 
-    def simulate_all_seds(self):
-        """ for each SNANA sim file, load in the catalog of galaxy SED data
-        from 3DHST and use EAZY to simulate an SED. The output simulated
-        SEDs are stored in the sub-directory '3dHST/sedsim.output' """
-        for sim in self.simlist:
-            sim.load_sed_data()
-            sim.generate_all_seds()
-
-
-
-
-
-
-class WfirstSimData(object):
+class SnanaSimData(object):
     # TODO : needs some checks to make sure that we don't rerun unneccessary
     # host galaxy SED simulations or S/N calculations.
 
@@ -74,7 +37,7 @@ class WfirstSimData(object):
 
     def add_snana_simdata(self, infilename):
         """read in a catalog of SN host galaxy data. Initialize a new
-        catalog from a SNANA data.fits file (using format='snana')
+        catalog from a SNANA head.fits file
         """
         simdata = Table()
         hdulist = fits.open(infilename)
@@ -107,10 +70,10 @@ class WfirstSimData(object):
         """
         simfilelist = glob(os.path.join(snanasimdir, '*HEAD.FITS'))
         # for simfile in simfilelist:
-        for simfile in simfilelist[:1]:
+        for simfile in simfilelist:
             if self.verbose:
                 print("Adding SNANA sim data from {:s}".format(simfile))
-            self.add_snana_simdata(simfile, format='snana')
+            self.add_snana_simdata(simfile)
         return
 
 
@@ -224,9 +187,15 @@ class WfirstSimData(object):
             self.eazydata[field] = EazyData(fitsfilename=fitsfilename)
 
 
-    def generate_all_seds(self, outdir='3DHST/sedsim.output',
-                          clobber=False):
-        """Use Gabe Brammer's EAZY code to simulate the host gal SED """
+    def simulate_host_spectra(self, indexlist=None,
+                              outdir='3DHST/sedsim.output',
+                              clobber=False):
+        """Use Gabe Brammer's EAZY code to simulate the host gal spectrum
+        for every host galaxy in the sample.
+        """
+        if indexlist is None:
+            indexlist = range(len(self.simdata['idmatch']))
+
         if self.verbose:
             print("Using Gabe Brammer's EAZY code to generate "
                   "the best-fit SEDs of the observed galaxies that "
@@ -234,7 +203,7 @@ class WfirstSimData(object):
         if not os.path.isdir(outdir):
             os.mkdir(outdir)
         sedoutfilelist = []
-        for isim in range(len(self.simdata['idmatch'])):
+        for isim in indexlist:
             fieldidx = self.simdata['idmatch'][isim]
             fieldstr, idxstr = fieldidx.split('.')
             field = fieldstr.lower().replace('-', '')
@@ -256,7 +225,7 @@ class WfirstSimData(object):
             Table.Column(data=sedoutfilelist, name='sedoutfile'))
 
 
-    def get_host_percentile_indices(self, zlist=[0.8, 1.2, 1.5, 2.0, 2.4],
+    def get_host_percentile_indices(self, zlist=[0.8, 1.2, 1.5, 2.0],
                                     percentilelist=[50, 80, 95]):
         """For each redshift in zlist, identify all simulated host galaxies
         within dz of that redshift.   Sort them by "observed" host magnitude
@@ -274,11 +243,12 @@ class WfirstSimData(object):
             index_array.append(
                 [iznearest[np.abs(magnearest - mag_percentiles[i]).argmin()]
                 for i in range(len(percentilelist))])
-        return(index_array)
+        return(np.ravel(index_array))
 
 
     def simulate_subaru_snr_curves(self, indexlist=[],
-                                   exposuretimelist=[1, 5, 10]):
+                                   exposuretimelist=[1, 5, 10, 40],
+                                   clobber=False):
         """ Run the subaru PSF ETC to get a S/N vs wavelength curve.
 
         indexlist : select a subset of the master catalog to simulate.
@@ -300,8 +270,13 @@ class WfirstSimData(object):
                 snroutfile = "etcout/subaruPFS_SNR_{:s}_z{:.2f}_m{:.2f}_{:d}hrs.dat".format(
                     self.simdata['idmatch'][idx], self.simdata['zmatch'][idx],
                     self.simdata['magmatch'][idx], et)
-                if self.verbose:
-                    print(
+                if os.path.isfile(snroutfile) and not clobber:
+                    if self.verbose:
+                        print("{:s} exists. Not clobbering.".format(
+                            snroutfile))
+                else:
+                    if self.verbose:
+                        print(
                         "Running the PFS ETC for "
                         "{:s} at z {:.2f} with mag {:.2f}"
                         "for {:d} hrs, sedfile {:s}.\n output: {:s}".format(
@@ -310,15 +285,15 @@ class WfirstSimData(object):
                             self.simdata['magmatch'][idx],
                             et, self.simdata['sedoutfile'][idx], snroutfile))
 
-                start = time.time()
-                etcerr = subprocess.call(["python",
-                                          "/Users/rodney/src/subarupfsETC/run_etc.py",
-                                          "@{:s}".format(defaultsfile),
-                                          "--MAG_FILE={:s}".format(sedoutfile),
-                                          "--OUTFILE_SNC={:s}".format(snroutfile)
-                                          ])
-                end = time.time()
-                print("Finished in {:.1f} seconds".format(end-start))
+                    start = time.time()
+                    etcerr = subprocess.call(["python",
+                                              "/Users/rodney/src/subarupfsETC/run_etc.py",
+                                              "@{:s}".format(defaultsfile),
+                                              "--MAG_FILE={:s}".format(sedoutfile),
+                                              "--OUTFILE_SNC={:s}".format(snroutfile)
+                                              ])
+                    end = time.time()
+                    print("Finished in {:.1f} seconds".format(end-start))
 
 
 
@@ -349,7 +324,11 @@ class SubaruObsSim(object):
         self.signaltonoise = etcoutdata['snpix']
         self.specsim = None
         self.verbose = verbose
-
+        self.redshift_detected = -1
+        self.bestsnr = 0
+        self.bestsnr_waverest = 0
+        self.bestbinsize = 0
+        self.redshift_detection_string = ""
 
     def load_specdata(self, specdatadir='3DHST/sedsim.output'):
         """ read in the simulated spectrum data, generated with EAZY """
@@ -383,12 +362,15 @@ class SubaruObsSim(object):
             weazy = self.specsim.wave
         ax2.plot(weazy, self.specsim.flux, color='r', **kwargs)
         ax2.invert_yaxis()
-        ax2.set_ylabel('AB mag', color='r')
+        ax2.set_ylabel('AB mag', color='r', rotation=-90)
 
+        if self.redshift_detected >= 0:
+            ax.text(0.05, 0.95, self.redshift_detection_string,
+                    ha='left', va='top', transform=ax.transAxes)
 
     def check_redshift(self, snrthresh=4, showplot=False, **kwargs):
         """Test whether a redshift can be determined from the spectrum"""
-        self.redshift_detected = False
+        self.redshift_detected = 0
         self.bestsnr = 0
         self.bestbinsize=1
         for binsize in [2,3,4,5,6,7,8,9,10]:
@@ -400,20 +382,22 @@ class SubaruObsSim(object):
             waverestbinned = self.wave_rest[ibinlist[:-1] + binsize / 2]
             snrbinmaxwaverest = waverestbinned[np.argmax(snrbinned)]
             if snrbinmax>=snrthresh:
-                self.redshift_detected = True
+                self.redshift_detected = 1
             if snrbinmax > self.bestsnr:
                 self.bestsnr = snrbinmax
                 self.bestsnr_waverest = snrbinmaxwaverest
                 self.bestbinsize = binsize
 
-        if self.redshift_detected and self.verbose:
-            print("Redshift detected with "
-                  "S/N={:.1f} at rest wave={:d} nm".format(
-                  self.bestsnr, int(self.bestsnr_waverest)))
-        elif self.redshift_detected is False and self.verbose:
-            print("Redshift not detected. Max "
-                  "S/N={:.1f} at rest wave={:d} nm".format(
-                  self.bestsnr, int(self.bestsnr_waverest)))
+        if self.redshift_detected == 0:
+            self.redshift_detection_string = "No "
+        elif self.redshift_detected == 1:
+            self.redshift_detection_string = ""
+        self.redshift_detection_string += (
+            "Redshift detected. Max S/N={:.1f} at rest wave={:d} nm".format(
+                self.bestsnr, int(self.bestsnr_waverest)))
+
+        if self.verbose:
+            print(self.redshift_detection_string)
 
         if showplot:
             binpix = self.bestbinsize
