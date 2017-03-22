@@ -74,8 +74,19 @@ class SnanaSimData(object):
             if self.verbose:
                 print("Adding SNANA sim data from {:s}".format(simfile))
             self.add_snana_simdata(simfile)
+        self.add_index()
         return
 
+    def add_index(self):
+        """ Add a unique index number for each row of the table, or
+        if an index column already exists, update it by extending the indices
+        """
+        # TODO : add some checks so we don't overwrite index values
+        indexarray = np.arange(len(self.simdata))
+        indexcolumn = table.Column(data=indexarray, name='index')
+        self.simdata.add_column(indexcolumn, index=0, rename_duplicate=False)
+        #else:
+        #    self.simdata['index'] = indexcolumn
 
     def write_catalog(self, outfilename, format='ascii.commented_header',
                       **kwargs):
@@ -193,9 +204,11 @@ class SnanaSimData(object):
         """Use Gabe Brammer's EAZY code to simulate the host gal spectrum
         for every host galaxy in the sample.
         """
+        if 'idmatch' not in self.simdata.colnames:
+            print("No idmatch data. Run 'pick_random_matches()'")
+            return
         if indexlist is None:
-            indexlist = range(len(self.simdata['idmatch']))
-
+            indexlist = self.simdata['index']
         if self.verbose:
             print("Using Gabe Brammer's EAZY code to generate "
                   "the best-fit SEDs of the observed galaxies that "
@@ -203,24 +216,43 @@ class SnanaSimData(object):
         if not os.path.isdir(outdir):
             os.mkdir(outdir)
         sedoutfilelist = []
-        for isim in indexlist:
-            fieldidx = self.simdata['idmatch'][isim]
+        for idx in self.simdata['index']:
+            fieldidx = self.simdata['idmatch'][idx]
             fieldstr, idxstr = fieldidx.split('.')
-            field = fieldstr.lower().replace('-', '')
-            thiseazydat = self.eazydata[field]
+            field3dhst = fieldstr.lower().replace('-', '')
+            idx3dhst = int(idxstr)
+            thiseazydat = self.eazydata[field3dhst]
             sedoutfilename = os.path.join(
-                outdir, 'wfirst_simsed.{:s}.dat'.format(fieldidx))
+                outdir, 'wfirst_simsed.{:06d}.dat'.format(idx))
             sedoutfilelist.append(sedoutfilename)
+            headerstring = """# WFIRST SN Host Gal SED simulated with EAZYpy
+# field3d={:s}
+# idx3d={:d}
+# z3d={:.3f}
+# mag3d={:.3f}
+# zsim={:.3f}
+# magsim={:.3f}
+# idxsim={:d}
+# wave_nm   mag_AB\n""".format(
+                field3dhst, idx3dhst,
+                self.simdata['zmatch'][idx], self.simdata['magmatch'][idx],
+                self.simdata['zsim'][idx], self.simdata['magsim'][idx],
+                self.simdata['index'][idx])
+            if idx not in indexlist:
+                if self.verbose>1:
+                    print("Skipping SED simulation for idx={:d}".format(idx))
+                continue
             if clobber or not os.path.isfile(sedoutfilename):
                 if self.verbose>1:
                     print("Generating {:s}".format(sedoutfilename))
                 simulate_eazy_sed(fieldidx=fieldidx, eazydata=thiseazydat,
-                                  savetofile=sedoutfilename)
+                                  savetofile=sedoutfilename,
+                                  headerstring=headerstring)
             else:
                 if self.verbose>1:
                     print("{:s} exists. Not clobbering.".format(
                         sedoutfilename))
-        assert(len(self.simdata['zsim']) == len(sedoutfilelist))
+        # assert(len(self.simdata['zsim']) == len(sedoutfilelist))
         self.simdata.add_column(
             Table.Column(data=sedoutfilelist, name='sedoutfile'))
 
@@ -442,7 +474,9 @@ class EazySpecSim(Table):
 
 def simulate_eazy_sed(fieldidx='GOODS-S.21740', eazydata=None,
                       returnfluxunit='AB', returnwaveunit='nm',
-                      limitwaverange=True, savetofile=''):
+                      limitwaverange=True, savetofile='',
+                      headerstring='# wave  flux'):
+
     """
     Pull best-fit SED from eazy-py output files.
 
@@ -451,7 +485,7 @@ def simulate_eazy_sed(fieldidx='GOODS-S.21740', eazydata=None,
 
     Optional Args:
     returnfluxunit: ['AB', 'flambda']
-      (TODO: add Jy)
+      TODO: add Jy
     returnwaveunit: ['A' or 'nm']
     limitwaverange: limit the output wavelengths to the range covered by PFS
     savetofile: filename for saving the output spectrum as a two-column ascii
@@ -466,17 +500,18 @@ def simulate_eazy_sed(fieldidx='GOODS-S.21740', eazydata=None,
     field = fieldstr.lower().replace('-','')
     idx = int(idxstr)
 
+    # TODO : this is a kludge.  Should not assume only one eazypy.data.fits file per field
     if eazydata is None:
         fitsfilename = glob(
             '3DHST/{0}_3dhst.*.eazypy.data.fits'.format(field))[0]
         eazydata = EazyData(fitsfilename)
 
-    match = eazydata.ID == idx
-    if match.sum() == 0:
+    imatch = eazydata.ID == idx
+    if imatch.sum() == 0:
         print('ID {0} not found.'.format(idx))
         return None, None
 
-    ix = np.arange(len(match))[match][0]
+    ix = np.arange(len(imatch))[imatch][0]
     z = eazydata.ZBEST[ix]
 
     # the input data units are Angstroms for wavelength
@@ -511,6 +546,7 @@ def simulate_eazy_sed(fieldidx='GOODS-S.21740', eazydata=None,
 
     if savetofile:
         fout = open(savetofile, 'w')
+        fout.write(headerstring)
         for i in range(len(templz)):
             fout.write('{wave:.3e} {flux:.3e}\n'.format(
                 wave=templz[i], flux=tempflux[i]))
