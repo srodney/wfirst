@@ -328,7 +328,43 @@ class SnanaSimData(object):
                     print("Finished in {:.1f} seconds".format(end-start))
 
 
+    def plot_efficiency_curves(self, dz=0.2, verbose=False):
+        """ make a plot showing the fraction of galaxies that
+        successfully get a redshift vs z.
+        (assumes that the simdata table already includes the
+        1hr, 5hr, 10hr and 40hr exposure time columns, with a
+        1 indicating a successful redshift and a 0 indicating a fail
+        """
+        zlist = np.arange(0.8, 2.4, dz)
+        fgotz = {'1hr':[], '5hr':[], '10hr':[], '40hr':[]}
 
+        for z in zlist:
+            iz = np.where(np.abs(self.simdata['zmatch'] - z) <= dz / 2.)[0]
+            for et in fgotz.keys():
+                if len(iz)>0:
+                    efficiency = (np.sum(self.simdata[et][iz] == 1) /
+                                  float(len(iz)))
+                else:
+                    efficiency = 0
+                fgotz[et].append(efficiency)
+
+        ax = plt.gca()
+        if verbose:
+            print("#et " + " ".join(["{:5.1f}".format(z) for z in zlist]))
+        for et, marker in zip(['40hr','10hr','5hr','1hr'],
+                              ['o','^','d','s']):
+            ax.plot(zlist, fgotz[et], marker=marker, ls='-', label=et)
+            if verbose:
+                print("{:4s}".format(et) +
+                      " ".join(["{:5.2f}".format(f) for f in fgotz[et]]))
+
+        ax.legend(loc='lower left', bbox_to_anchor=[1.02,0.6],
+                  bbox_transform=ax.transAxes, frameon=False,
+                  numpoints=1)
+        ax.set_xlim(0.6, 2.5)
+        ax.set_ylim(-0.05, 1.05)
+        ax.set_xlabel('redshift')
+        ax.set_ylabel('spectroscopic completeness')
 
 
 class SubaruObsSim(object):
@@ -336,14 +372,12 @@ class SubaruObsSim(object):
     """
     # TODO: record metadata in the .dat file header and read it in here
     # TODO:  better yet--- use a fits bintable instead of an ascii file.
-    def __init__(self, etcoutfilename, verbose=1):
+    def __init__(self, etcoutfilename, z, mag, exptime_hours, verbose=1):
         # super(Table, self).__init__(*args, **kwargs)
         # KLUDGE!  parsing filename to get redshift, host mag and exptime
-        filenameparselist = os.path.basename(etcoutfilename).split('_')
-        self.matchid = filenameparselist[2]
-        self.z = float(filenameparselist[3][1:])
-        self.mag = float(filenameparselist[4][1:])
-        self.exptime_hours = float(filenameparselist[5].strip('hrs.dat'))
+        self.z = z
+        self.mag = mag
+        self.exptime_hours = exptime_hours
         self.exptime_seconds = self.exptime_hours * 3600
         etcoutdata = ascii.read(etcoutfilename, format='basic',
                                 names=['arm', 'pix', 'wave','snpix',
@@ -354,6 +388,7 @@ class SubaruObsSim(object):
         self.wave_obs = etcoutdata['wave']
         self.wave_rest = self.wave_obs / (1 + self.z)
         self.signaltonoise = etcoutdata['snpix']
+        self.mAB = etcoutdata['mAB']
         self.specsim = None
         self.verbose = verbose
         self.redshift_detected = -1
@@ -383,18 +418,11 @@ class SubaruObsSim(object):
         xlab = ax.set_xlabel(xlabel)
         ylab = ax.set_ylabel('S/N per pix with Subaru PFS')
 
-        if not showspec:
-            return
-        if self.specsim is None:
-            self.load_specdata()
-        ax2 = ax.twinx()
-        if frame=='rest':
-            weazy = self.specsim.wave / (1 + self.z)
-        else:
-            weazy = self.specsim.wave
-        ax2.plot(weazy, self.specsim.flux, color='r', **kwargs)
-        ax2.invert_yaxis()
-        ax2.set_ylabel('AB mag', color='r', rotation=-90)
+        if showspec:
+            ax2 = ax.twinx()
+            ax2.plot(wsubaru, self.mAB, color='r', **kwargs)
+            ax2.invert_yaxis()
+            ax2.set_ylabel('AB mag', color='r', rotation=-90)
 
         if self.redshift_detected >= 0:
             ax.text(0.05, 0.95, self.redshift_detection_string,
@@ -405,7 +433,7 @@ class SubaruObsSim(object):
         self.redshift_detected = 0
         self.bestsnr = 0
         self.bestbinsize=1
-        for binsize in [2,3,4,5,6,7,8,9,10]:
+        for binsize in [2,4,6,8,10,20]:
             ibinlist = np.arange(0, len(self.signaltonoise), binsize)
             snrbinned = np.array(
                 [self.signaltonoise[ibin:ibin + binsize].sum()/np.sqrt(binsize)
