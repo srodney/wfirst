@@ -5,18 +5,15 @@
 # to get a redshift for that host.
 
 from astropy.io import fits
-from astropy.table import Table
+from astropy.table import Table, Column
 from astropy import table
 from astropy.io import ascii
 import os
 import subprocess
-import exceptions
 import numpy as np
 from glob import glob
 from matplotlib import pyplot as plt
-from StringIO import StringIO
 import time
-
 
 
 class SnanaSimData(object):
@@ -28,12 +25,52 @@ class SnanaSimData(object):
         self.matchdata = Table()
         self.simdata = Table()
         self.simfilelist = []
-        self.eazydata = {}
+        #self.eazytemplatetable = Table()
+        self.eazytemplatedata = np.ndarray([], dtype=np.float64)
         if infilename:
             self.add_snana_simdata(infilename, *args, **kwargs)
         elif self.verbose:
             print("Initiliazed an empty WfirstSimData object")
         return
+
+    def load_hostlib_catalog(self, hostlibfilename):
+        """Load a catalog of potential SN host galaxies from a
+        SNANA HOSTLIB file (an ascii text file).
+        """
+        self.simdata = Table.read(hostlibfilename, format='ascii.basic')
+        if self.verbose:
+            print("Loaded galaxy data from SNANA HOSTLIB file {0}".format(
+                hostlibfilename))
+        return
+
+    def load_eazypy_templates(self, eazytemplatefilename,
+                              format='ascii.commented_header', **kwargs):
+        """Read in the galaxy SED templates (basis functions for the
+        eazypy SED fitting / simulation) and store as the 'eazytemplatedata'
+        property.
+
+        We read in an astropy Table object with N rows and M+1 columns, where
+        N is the number of wavelength steps and M is the
+        number of templates (we expect 13).
+        The first column is the  wavelength array, common to all templates.
+
+        We translate the Nx(M+1) Table data into a np structured array,
+        then reshape as a (M+1)xN numpy ndarray, with the first row giving
+        the wavelength array and each subsequent row giving a single
+        template flux array.
+        See the function simulate_eazy_sed_from_coeffs() to construct
+        a simulated galaxy SED with a linear combination from this matrix.
+        """
+        eazytemplates = Table.read(eazytemplatefilename,
+                                   format=format, **kwargs)
+        tempdata = eazytemplates.as_array()
+        self.eazytemplatedata = tempdata.view(np.float64).reshape(
+                tempdata.shape + (-1,)).T
+        if self.verbose:
+            print("Loaded Eazypy template SEDs from {0}".format(
+                eazytemplatefilename))
+        return
+
 
     def add_snana_simdata(self, infilename):
         """read in a catalog of SN host galaxy data. Initialize a new
@@ -194,12 +231,12 @@ class SnanaSimData(object):
 
         for field in ['aegis', 'cosmos', 'goodsn', 'goodss', 'uds']:
             fitsfilename = glob(
-                '3DHST/{0}_3dhst.*.eazypy.data.fits'.format(field))[0]
+                'DATA/eazypy/{0}_3dhst.*.eazypy.data.fits'.format(field))[0]
             self.eazydata[field] = EazyData(fitsfilename=fitsfilename)
 
 
     def simulate_host_spectra(self, indexlist=None,
-                              outdir='3DHST/sedsim.output',
+                              outdir='DATA/3DHST/sedsim.output',
                               clobber=False):
         """Use Gabe Brammer's EAZY code to simulate the host gal spectrum
         for every host galaxy in the sample.
@@ -503,7 +540,7 @@ class EazySpecSim(Table):
 def simulate_eazy_sed(fieldidx='GOODS-S.21740', eazydata=None,
                       returnfluxunit='AB', returnwaveunit='nm',
                       limitwaverange=True, savetofile='',
-                      headerstring='# wave  flux'):
+                      headerstring='# wave  flux\n'):
 
     """
     Pull best-fit SED from eazy-py output files.
@@ -511,13 +548,11 @@ def simulate_eazy_sed(fieldidx='GOODS-S.21740', eazydata=None,
     NB: Requires the eazy-py package to apply the IGM absorption!
     (https://github.com/gbrammer/eazy-py)
 
-    Optional Args:
-    returnfluxunit: ['AB', 'flambda']
-      TODO: add Jy
-    returnwaveunit: ['A' or 'nm']
-    limitwaverange: limit the output wavelengths to the range covered by PFS
-    savetofile: filename for saving the output spectrum as a two-column ascii
-        data file (suitable for use with the SubaruPFS ETC from C. Hirata.
+    Optional Args: returnfluxunit: ['AB', 'flambda'] TODO: add Jy
+    returnwaveunit: ['A' or 'nm'] limitwaverange: limit the output
+    wavelengths to the range covered by PFS savetofile: filename for saving
+    the output spectrum as a two-column ascii data file (suitable for use
+    with the SubaruPFS ETC from C. Hirata.
 
     Returns
     -------
@@ -560,7 +595,7 @@ def simulate_eazy_sed(fieldidx='GOODS-S.21740', eazydata=None,
     if limitwaverange:
         # to simplify things, we only write out the data over the Subaru PFS
         # wavelength range, from 300 to 1300 nm (3000 to 13000 Angstroms)
-        ipfs = np.where((templz>3000) & (templz<13000))[0]
+        ipfs = np.where((templz>2000) & (templz<25000))[0]
         templz = templz[ipfs]
         tempflux = tempflux[ipfs]
 
@@ -581,6 +616,74 @@ def simulate_eazy_sed(fieldidx='GOODS-S.21740', eazydata=None,
         fout.close()
     else:
         return templz, tempflux
+
+def simulate_eazy_sed_from_coeffs(
+        eazycoeffs, eazytemplatedata, z,
+        returnfluxunit='', returnwaveunit='A',
+        limitwaverange=True, savetofile='',
+         **outfile_kwargs):
+
+    """
+    Generate a simulated SED from a given set of input eazy-py coefficients
+    and eazypy templates.
+
+    NB: Requires the eazy-py package to apply the IGM absorption!
+    (https://github.com/gbrammer/eazy-py)
+
+    Optional Args:
+    returnfluxunit: ['AB', 'flambda'] TODO: add Jy
+        'AB'= return log(flux) as AB magnitudes
+        'flambda' = return flux density in erg/s/cm2/A
+    returnwaveunit: ['A' or 'nm'] limitwaverange: limit the output
+    wavelengths to the range covered by PFS savetofile: filename for saving
+    the output spectrum as a two-column ascii data file (suitable for use
+    with the SubaruPFS ETC from C. Hirata.
+
+    Returns
+    -------
+        obswave : observed-frame wavelength, Angstroms or  nm
+        obsflux : flux density of best-fit template, erg/s/cm2/A or AB mag
+    """
+    # the input data units are Angstroms for wavelength
+    # and cgs for flux: erg/cm2/s/Ang
+    obswave = eazytemplatedata[0] * (1 + z)
+    obsfluxmatrix = eazytemplatedata[1:]
+    sedsimflux = np.dot(eazycoeffs, obsfluxmatrix)
+    fnu_factor = 10 ** (-0.4 * (25 + 48.6))
+    flam_spec = 1. / (1 + z) ** 2
+    obsflux = sedsimflux * fnu_factor * flam_spec
+
+    try:
+        import eazy.igm
+        igmz = eazy.igm.Inoue14().full_IGM(z, obswave)
+        obsflux *= igmz
+    except:
+        pass
+
+    if limitwaverange:
+        # to simplify things, we only write out the data over the Subaru PFS
+        # + WFIRST prism wavelength range, from 200 to 2500 nm
+        # (3000 to 25000 Angstroms)
+        iuvoir = np.where((obswave>2000) & (obswave<25000))[0]
+        obswave = obswave[iuvoir]
+        obsflux = obsflux[iuvoir]
+
+    if returnfluxunit=='AB':
+        # convert from flux density f_lambda into AB mag:
+        mAB_from_flambda = lambda f_lambda, wave: -2.5 * np.log10(
+            3.34e4 * wave * wave * f_lambda / 3631)
+        obsflux = mAB_from_flambda(obsflux, obswave)
+    if returnwaveunit=='nm':
+        obswave = obswave / 10.
+
+    if savetofile:
+        out_table = Table()
+        outcol1 = Column(data=obswave, name='wave')
+        outcol2 = Column(data=obsflux, name='flux')
+        out_table.add_columns([outcol1, outcol2])
+        out_table.write(savetofile, **outfile_kwargs)
+
+    return obswave, obsflux
 
 
 

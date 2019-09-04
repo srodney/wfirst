@@ -6,73 +6,32 @@ Arturo Avelino and Andy Friedman
 """
 
 import numpy as np
-from matplotlib import pyplot as pl
+from matplotlib import pyplot as pl, ticker
 import os
 import sys
 from astropy.io import ascii
-from astropy.table import Table
 import sncosmo
 from scipy import integrate as scint, interpolate as scinterp, optimize as scopt
 import exceptions
-
+import glob
 
 _B_WAVELENGTH = 4302.57
 _V_WAVELENGTH = 5428.55
 
 __THISFILE__ = sys.argv[0]
-if 'ipython' in __THISFILE__ :
+if 'ipy' in __THISFILE__ :
     __THISFILE__ = __file__
 __THISPATH__ = os.path.abspath(os.path.dirname(__THISFILE__))
 __THISDIR__ = os.path.abspath(os.path.dirname(__THISFILE__))
 
-__LOWZLIST__ = ['sn1998bu_CfA', 'sn1999cl_CfA', 'sn1999cl_LCO', 'sn1999cl_LOSS',
-                'sn1999cp_LCO', 'sn1999cp_LOSS', 'sn1999ek_LCO', 'sn1999ee_LCO',
-                'sn1999gp_CfA', 'sn1999gp_LCO', 'sn1999gp_LOSS', 'sn2000E_ESO',
-                'sn2000bh_LCO', 'sn2000ca_LCO', 'sn2000ce_LCO', 'sn2001ba_LCO',
-                'sn2001bt_LCO', 'sn2001cn_LCO', 'sn2001cz_LCO', 'sn2001el_CTIO',
-                'sn2002dj_ESO', 'sn2002dj_LOSS', 'sn2002fk_LOSS', 'sn2003cg_LOSS',
-                'sn2003du_LOSS', 'sn2003hv_LOSS', 'sn2004S_CTIO', 'sn2003du_ESO',
-                'sn2004S_LOSS', 'sn2004ef_CSP', 'sn2004ef_LOSS', 'sn2004eo_CSP',
-                'sn2004eo_LOSS', 'sn2004ey_CSP', 'sn2004ey_LOSS', 'sn2004gs_CSP',
-                'sn2004gs_LOSS', 'sn2005A_CSP', 'sn2005M_LOSS', 'sn2005M_CSP',
-                'sn2005am_CSP', 'sn2005am_LOSS', 'sn2005bo_CSP', 'sn2005bo_LOSS',
-                'sn2005cf_CfA', 'sn2005cf_LOSS', 'sn2005el_CSP', 'sn2005el_CfA',
-                'sn2005el_LOSS', 'sn2005eq_CSP', 'sn2005eq_LOSS', 'sn2005eq_CfA',
-                'sn2005eu_CfA', 'sn2005eu_LOSS', 'sn2005hc_CSP', 'sn2005hj_CSP',
-                'sn2005iq_CSP', 'sn2005kc_CSP', 'sn2005ki_CSP', 'sn2005ls_CfA',
-                'sn2005na_CSP', 'sn2005na_LOSS', 'sn2006D_CSP', 'sn2006D_CfA',
-                'sn2006D_LOSS', 'sn2006X_CSP', 'sn2006X_CfA', 'sn2006X_LOSS',
-                'sn2006ac_CfA', 'sn2006ax_CSP', 'sn2006bh_CSP', 'sn2006ax_CfA',
-                'sn2006cp_LOSS', 'sn2006dd_CSP', 'sn2006ej_CSP', 'sn2006cp_CfA',
-                'sn2006ej_LOSS', 'sn2006et_CSP', 'sn2006ev_CSP', 'sn2006gj_CSP',
-                'sn2006gr_LOSS', 'sn2006hb_CSP', 'sn2006hb_LOSS','sn2006gr_CfA',
-                'sn2006hx_CSP', 'sn2006is_CSP', 'sn2006kf_CSP', 'sn2006le_CfA',
-                'sn2006le_LOSS', 'sn2006lf_CfA', 'sn2006ob_CSP','sn2006lf_LOSS',
-                'sn2006os_CSP', 'sn2007A_CSP', 'sn2007S_CSP', 'sn2007S_CfA',
-                'sn2007af_CSP', 'sn2007af_LOSS', 'sn2007as_CSP', 'sn2007bc_CSP',
-                'sn2007bc_LOSS', 'sn2007bd_CSP', 'sn2007bm_CSP', 'sn2007ca_CSP',
-                'sn2007ca_CfA', 'sn2007ca_LOSS', 'sn2007co_CfA', 'sn2007co_LOSS',
-                'sn2007cq_LOSS', 'sn2007hx_CSP', 'sn2007jg_CSP', 'sn2007cq_CfA',
-                'sn2007le_CSP', 'sn2007le_CfA', 'sn2007le_LOSS', 'sn2007nq_CSP',
-                'sn2007on_CSP', 'sn2007qe_CfA', 'sn2007qe_LOSS', 'sn2007sr_CSP',
-                'sn2007sr_LOSS', 'sn2008C_CSP', 'sn2008C_LOSS', 'sn2008R_CSP',
-                'sn2008Z_CfA', 'sn2008Z_LOSS', 'sn2008bc_CSP', 'sn2008bq_CSP',
-                'sn2008fp_CSP', 'sn2008gb_CfA', 'sn2008gp_CSP', 'sn2008gl_CfA',
-                'sn2008hm_CfA', 'sn2008hv_CSP', 'sn2008hv_CfA', 'sn2008hs_CfA',
-                'sn2008ia_CSP', 'sn2009D_CfA', 'sn2009al_CfA', 'sn2009ad_CfA',
-                'sn2009bv_CfA', 'sn2009do_CfA', 'sn2009ds_CfA','sn2009an_CfA',
-                'sn2009jr_CfA', 'sn2009kk_CfA', 'sn2009kq_CfA', 'sn2009fv_CfA',
-                'sn2009le_CfA', 'sn2009lf_CfA', 'sn2009na_CfA', 'sn2010Y_CfA',
-                'sn2010ag_CfA', 'sn2010dw_CfA', 'sn2010ju_CfA', 'sn2010ai_CfA',
-                'sn2010kg_CfA', 'sn2011K_CfA', 'sn2011ae_CfA',  'sn2011B_CfA',
-                'sn2011df_CfA', 'sn2011ao_CfA', 'sn2011by_CfA',
-                'snf20080514-002_LOSS', 'snf20080522-000_CfA']
 
 
 class TimeSeriesGrid(object):
+    """A class for handling a SN SED time series (i.e., a sequence of spectro-
+     photometric template arrays at many phases. The input SEDfile should 
+     have three columns giving phase, wavelength and flux. """
     def __init__(self, sedfile):
         self.sedfile = sedfile
-
         fin = open(self.sedfile,'r')
         all_lines = fin.readlines()
         self.headerlines = np.array([line for line in all_lines
@@ -80,6 +39,26 @@ class TimeSeriesGrid(object):
                                      line.lstrip().startswith('#')])
         self.parse_lowz_template_header()
         self.phase, self.wave, self.value = self.read_timeseriesgrid_data()
+
+        # check that all phases have the same number of wavelength steps
+        # If any phases do not, then it is probably a duplicate
+        # data entry, so we just trim it to the correct size.
+        nwavestepslist = [len(w) for w in self.wave]
+        if len(np.unique(nwavestepslist))>1:
+            truensteps = np.min(nwavestepslist)
+            ibad = np.where(nwavestepslist>truensteps)[0]
+            for i in ibad:
+                self.wave[i] = self.wave[i][:truensteps]
+                self.value[i] = self.value[i][:truensteps]
+            # igood = np.where(nwavestepslist==truensteps)[0]
+            # self.phase = self.phase[igood]
+            # self.wave = self.wave[igood]
+            # self.value = self.value[igood]
+
+        nwavestepslist = [len(w) for w in self.wave]
+        assert (len(np.unique(nwavestepslist))==1)
+
+
 
     def parse_lowz_template_header(self):
         """ read in metadata from the sed data file header
@@ -112,20 +91,19 @@ class TimeSeriesGrid(object):
         fluxarray = np.array([ f[ np.where( p == day ) ] for day in phaselist ])
         return phasearray, wavearray, fluxarray
 
-    def plot_at_phase(self, phase=0, **kwargs):
+    def plot_at_phase(self, phase=0, fluxoffset=0, **kwargs):
         """ plot the SED template data from the given set of data arrays, only at
         the specified phase.
-        :param phaselist: 1D array giving the list of phases (rel. to B band max)
-        :param wavegrid: 2D array giving the wavelength values at each phase
-        :param fluxgrid: 2D array giving the flux values at each phase
-        :param phase: (int) the rest-frame phase (rel. to B band max) to be plotted
+        :param phase: phase of the SED model to plot (rel. to B band max)
+        :param fluxoffset: additive offset to the flux (for separating multiple
+        curves on the figure)
         :param kwargs: passed on to matplotlib.pyplot.plot()
         :return:
         """
         ithisphase = np.where(np.abs(self.phase-phase)<1)[0]
         wave = self.wave[ithisphase, :][0]
         flux = self.value[ithisphase, :][0]
-        pl.plot(wave, flux, **kwargs)
+        pl.plot(wave, flux + fluxoffset, **kwargs)
         return wave, flux
 
 
@@ -227,27 +205,38 @@ class TimeSeriesGrid(object):
         return
 
 
+def createSncosmoSource(filename):
+    """Create an sncosmo Source from a suitable SED file containing a 
+    time series of spectrophotometric templates. """
+    phase1, wave1, flux1 = sncosmo.read_griddata_ascii(filename)
+    snname = os.path.basename(filename).split('.')[0]
+    source = sncosmo.TimeSeriesSource(phase1, wave1, flux1, name=snname,
+                                      zero_before=True)
+    return source
+
 
 def load_sncosmo_models(modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
                         salt2subdir='salt2-4', salt2irsubdir='salt2ir',
-                        lowzsubdir='lowzIa'):
+                        lowzsubdir='lowzIa',
+                        x1min=-1, x1max=1, cmin=-0.1, cmax=0.3):
     """
     Load all the lowz template SEDs from sncosmo, along with the original
-    salt2 model and our modified salt2 model that is extrapolated to the NIR.
+    salt2 model and the Hsiao Type Ia model.
     :param datadir:
     :return:
     """
     # read in all the low-z mangled SEDs
+    lowzmodeldir = os.path.join(modeldir, lowzsubdir)
+    lowzsedfilelist = glob.glob("%s/*.dat" % lowzmodeldir)
     modeldict = {}
-    for name in __LOWZLIST__:
-        sn = sncosmo.Model(name.lower())
-        lowzmodeldir = os.path.join(modeldir, lowzsubdir)
-        lowzmodeldatfile = os.path.join(lowzmodeldir, '%s.dat' % name)
+    for lowzsedfile in lowzsedfilelist:
+        source = createSncosmoSource(lowzsedfile)
+        model = sncosmo.Model(source)
 
         # read the header info of the sed template file to
         # determine the x1,c, Delta, Av, z  and
         # store these as properties of the sncosmo Model object
-        fin = open(lowzmodeldatfile,'r')
+        fin = open(lowzsedfile,'r')
         all_lines = fin.readlines()
         for hdrline in all_lines:
             hdrline = hdrline.strip()
@@ -260,18 +249,27 @@ def load_sncosmo_models(modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
             value = hdrline.split('=')[1].strip()
             if key not in ['name','survey']:
                 value = float(value)
-            sn.__dict__[key] = value
-
-        modeldict[name.lower()] = sn
+            model.__dict__[key] = value
+        if model.salt2x1 < x1min:
+            continue
+        if model.salt2x1 > x1max:
+            continue
+        if model.salt2c < cmin:
+            continue
+        if model.salt2c > cmax:
+            continue
+        modeldict[source.name] = model
 
     # read in the original and the revised salt2 models:
+    modeldict['hsiao'] = sncosmo.Model('hsiao')
+
     salt2modeldir = os.path.join(modeldir, salt2subdir)
-    salt2irmodeldir = os.path.join(modeldir, salt2irsubdir)
     salt2 = sncosmo.models.SALT2Source(modeldir=salt2modeldir, name='salt2')
+    modeldict['salt2'] = salt2
+
+    salt2irmodeldir = os.path.join(modeldir, salt2irsubdir)
     salt2ir = sncosmo.models.SALT2Source(modeldir=salt2irmodeldir,
                                          name='salt2ir')
-    modeldict['hsiao'] = sncosmo.Model('hsiao')
-    modeldict['salt2'] = salt2
     modeldict['salt2ir'] = salt2ir
 
     return modeldict
@@ -300,12 +298,23 @@ def plot_template0_data(modeldict=None, phase=0, x1=0, c=0):
     waveir = np.arange(2000, salt2irmod.maxwave())
 
     # plot all the low-z mangled SEDs at the given phase
+    normwavemin = 3500
+    normwavemax = 8500
+
+    # plot all the low-z mangled SEDs at the given phase
+    pl.clf()
     fluxlowzarray = []
-    for name in __LOWZLIST__:
-        lowzsn = modeldict[name.lower()]
+    for name in modeldict.keys():
+        if not name.startswith('sn'):
+            continue
+        lowzsn = modeldict[name]
         fluxlowz = lowzsn.flux(phase, wavelowz)
-        iwavemax = np.where(wavelowz>=np.max(wave0))[0][0]
-        fluxlowz_norm = scint.trapz(fluxlowz[:iwavemax], wavelowz[:iwavemax])
+        # iwavemax = np.where(wavelowz>=np.max(wave0))[0][0]
+        # fluxlowz_norm = scint.trapz(fluxlowz[:iwavemax], wavelowz[:iwavemax])
+        iwavemin = np.argmin(np.abs(wavelowz-normwavemin))
+        iwavemax = np.argmin(np.abs(wavelowz-normwavemax))
+        fluxlowz_norm = scint.trapz(fluxlowz[iwavemin:iwavemax],
+                                    wavelowz[iwavemin:iwavemax])
         pl.plot(wavelowz, fluxlowz/fluxlowz_norm,
                 color='b',ls='-', alpha=0.1, lw=2 )
         # pl.plot(waveir, snflux/snflux.sum(), 'b-', alpha=0.3, lw=1 )
@@ -314,32 +323,52 @@ def plot_template0_data(modeldict=None, phase=0, x1=0, c=0):
     # plot the normalized template0 data from the original SALT2 model
     # at the given phase:
     flux0 = salt2mod.flux(phase, wave0)
-    flux0_norm = scint.trapz(flux0, wave0)
-    pl.plot(wave0, flux0/flux0_norm, 'k-', lw=3,
-            label='SALT2-4 template0' )
+    iwavemin0 = np.argmin(np.abs(wave0 - normwavemin))
+    iwavemax0 = np.argmin(np.abs(wave0 - normwavemax))
+    flux0_norm = scint.trapz(flux0[iwavemin0:iwavemax0],
+                             wave0[iwavemin0:iwavemax0])
+    pl.plot(wave0, flux0/flux0_norm, color='0.5', ls='-', lw=3.5,
+            label='SALT2' )
 
     # plot the normalized template0 flux from the modified SALT2-IR model
     # at the given phase:
     fluxir = salt2irmod.flux(phase, waveir)
-    iwavemaxir = np.where(waveir>=np.max(wave0))[0][0]
-    fluxir_norm = scint.trapz(fluxir[:iwavemaxir], waveir[:iwavemaxir])
+    iwaveminir = np.argmin(np.abs(waveir - normwavemin))
+    iwavemaxir = np.argmin(np.abs(waveir - normwavemax))
+    fluxir_norm = scint.trapz(fluxir[iwaveminir:iwavemaxir],
+                              waveir[iwaveminir:iwavemaxir])
     pl.plot(waveir, fluxir/fluxir_norm, marker=' ', color='darkorange',
-            ls='-', lw=3,
-            label='SALT2-IR template0', zorder=90)
-
-    # plot the median flux from all lowzIa templates
-    fluxlowzarray = np.array(fluxlowzarray)
-    pl.plot(wavelowz, np.median(fluxlowzarray, axis=0),
-            color='m', ls='--', alpha=1, lw=1.5,
-            label='Median of low-z Sample', zorder=100,)
+            ls='-', lw=1.2, label='SALT2-IR', zorder=90)
 
     ax = pl.gca()
-    ax.set_xlabel('wavelength (Angstroms)')
-    ax.set_ylabel('flux (normalized)')
+    ax.set_xlabel(r'Wavelength ($\rm{\AA}$)')
+    ax.set_ylabel('SALT2 M0 value (arbitrary units)')
+    pl.setp(ax.get_yticklabels(), visible=False)
     # return temp0, modeldict
     pl.legend(loc='upper right')
-    ax.set_xlim(3500,11000)
-    ax.set_ylim(0,0.0005)
+    ax.set_xlim(5500,15000)
+    ax.set_ylim(0,0.00021)
+
+
+def check_for_salt2_fits(sedfiledir='lowzIa',
+                         fitresfilename='lowz_salt2.fitres'):
+    """ Check how many of our Low-z Ia sample have SALT2 fit parameters in
+    the .fitres file from D.Scolnic.
+    """
+    # get a list of SN names from te SED file directory.
+    sedfilelist = glob.glob("%s/*.dat"%sedfiledir)
+    snnamelist = [os.path.basename(s).split('_')[0].lower() for s in sedfilelist]
+
+    # read in the low-z SN salt2 fit parameters from the file provided by Dan
+    salt2fitfile = os.path.join(__THISDIR__, fitresfilename)
+    salt2fitdata = ascii.read(salt2fitfile,
+                              format='commented_header', data_start=0,
+                              header_start=-1)
+
+    salt2fitnames = ['sn' + cid.lower() for cid in salt2fitdata['CID']]
+    gotsalt2fit = [sn for sn in snnamelist if sn in salt2fitnames]
+    nosalt2fit = [sn for sn in snnamelist if sn not in salt2fitnames]
+    return gotsalt2fit, nosalt2fit
 
 
 def get_mlcs_to_salt2_parameter_conversion_functions(
@@ -677,6 +706,7 @@ def deredden_template_sed(sedfile, sedfileout=None, snname=None,
     snname_stripped = snname.lstrip('sn')
     if snname_stripped in salt2fitdata['CID']:
         isalt2 = np.where(salt2fitdata['CID']==snname_stripped)[0]
+        x0 = np.median(salt2fitdata['x0'][isalt2])
         x1 = np.median(salt2fitdata['x1'][isalt2])
         c = np.median(salt2fitdata['c'][isalt2])
         zHD = np.median(salt2fitdata['zHD'][isalt2])
@@ -685,15 +715,22 @@ def deredden_template_sed(sedfile, sedfileout=None, snname=None,
             print("Note significant difference in redshift for %s" % snname +
                   " \\n zhelio = %.5f    zsalt2= %.5f" % (zhelio, zsalt2))
     else:
-        delta2x1, av2c = get_mlcs_to_salt2_parameter_conversion_functions(
-            fitresfilename=fitresfilename)
-        x1 = delta2x1(Delta_mlcs)
-        c = av2c(Avhost)
-        zHD = zcmb
-        z = zhelio
+        print("No salt2 fit results available for %s"%snname)
+        return -1
+        #delta2x1, av2c = get_mlcs_to_salt2_parameter_conversion_functions(
+        #    fitresfilename=fitresfilename)
+        #x1 = delta2x1(Delta_mlcs)
+        #c = av2c(Avhost)
+        #zHD = zcmb
+        #z = zhelio
 
     # read in the SED template file directly
-    lowzsn = TimeSeriesGrid(sedfile)
+    try:
+        lowzsn = TimeSeriesGrid(sedfile)
+    except AssertionError:
+        print("Bad input SED data for %s"%sedfile)
+        # return -1
+
     snphase, snwave, snflux = lowzsn.phase, lowzsn.wave, lowzsn.value
 
     # Define new arrays to hold the de-reddened template data
@@ -705,6 +742,7 @@ def deredden_template_sed(sedfile, sedfileout=None, snname=None,
         print >> fout, '# name = %s' % snname_stripped
         print >> fout, '# survey = %s' % snname.split('_')[-1]
         print >> fout, '# z = %.5f' % zhelio
+        print >> fout, '# salt2x0 = %.5f' % x0
         print >> fout, '# salt2x1 = %.5f' % x1
         print >> fout, '# salt2c = %.5f' % c
         print >> fout, '# mlcsDelta = %.5f' % Delta_mlcs
@@ -732,11 +770,7 @@ def deredden_template_sed(sedfile, sedfileout=None, snname=None,
     if sedfileout is not None:
         fout.close()
 
-    snphaseout = np.array(snphaseout)
-    snwaveout = np.array(snwaveout)
-    snfluxout = np.array(snfluxout)
-
-    return snphaseout, snwaveout, snfluxout
+    return 1
 
 
 def plot_dereddened_template_comparison(sedfile0, sedfile, phase=0):
@@ -767,7 +801,7 @@ def plot_dereddened_template_comparison(sedfile0, sedfile, phase=0):
             [snphase0,snphase1],[snwave0,snwave1],[snflux0,snflux1],
             ['r','c'], ['original', 'dereddened']):
         iwavemax = np.where(snwave[iphase]>=np.max(salt2wave))[0][0]
-        if minwave <= np.min(snwave):
+        if minwave <= np.min(snwave[iphase]):
             iwavemin = 0
         else:
             iwavemin = np.where(snwave[iphase] <= minwave)[0][-1]
@@ -792,31 +826,35 @@ def deredden_template_list(sedfilelist=None,
     if sedfilelist is None:
         sedfilelist = glob.glob('lowzIaObsFrame/sn*_*.dat')
     for sedfile0 in sedfilelist:
-        sedfilename = os.path.basename(sedfile0)
-        snname = sedfilename.split('_')[0]
-        sedfile1 = os.path.join('lowzIa', sedfilename)
+        sedfile0basename = os.path.basename(sedfile0)
+        sedfile1basename = sedfile0basename.split('_')[0] + '_' + \
+                           sedfile0basename.split('__')[-1].split('_')[0] + '.dat'
+        snname = sedfile0basename.split('_')[0]
+        sedfile1 = os.path.join('lowzIa', sedfile1basename)
         if os.path.exists(sedfile1) and not clobber:
             print("%s exists. Not clobbering" % sedfile1)
             continue
-        try:
-            deredden_template_sed(sedfile0, sedfile1, snname=snname)
-            print "Successfully Dereddened %s" % snname
-        except:
+        result = deredden_template_sed(sedfile0, sedfile1, snname=snname)
+        if result<0:
             print "!!!  Failed to Deredden %s  !!!" % snname
             continue
-        if showfig:
+        else:
+            print "Successfully Dereddened %s" % snname
+
+        if showfig or savefig:
             pl.clf()
             plot_dereddened_template_comparison(sedfile0, sedfile1, phase=0)
-        if savefig:
-            figfilename = 'lowzIa/%s.png' % sedfilename.split('.')[0]
-            pl.savefig(figfilename)
+            if savefig:
+                figfilename = 'lowzIa/%s.png' % sedfile1basename.split('.')[0]
+                pl.savefig(figfilename)
 
 def load_all_templates():
     templatedict = {}
-    for snname in __LOWZLIST__:
+    sedfilelist = os.listdir('lowzIa')
+    for sedfile in sedfilelist:
+        snname = sedfile.split('.')[0]
         sedfile = os.path.join('lowzIa', snname) + '.dat'
         templatedict[snname] = TimeSeriesGrid(sedfile=sedfile)
-
     return templatedict
 
 
@@ -825,7 +863,7 @@ def extend_template0_ir(modeldict = None, x1min=-1, x1max=1,
                         modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
                         salt2dir = 'salt2-4',
                         salt2irdir = 'salt2ir',
-                        wavejoin = 8500, wavemax = 24990):
+                        wavejoin = 8500, wavemax = 24990, verbose=False):
     """ extend the salt2 Template_0 model component
     by adopting the IR tails from a collection of SN Ia template SEDs.
     Here we use the collection of CfA, CSP, and other low-z SNe provided by
@@ -854,13 +892,16 @@ def extend_template0_ir(modeldict = None, x1min=-1, x1max=1,
 
         ijoin = np.argmin(np.abs(wave0-wavejoin))
         fluxjoin = flux0[ijoin]
-        print( 'splicing tail onto template for day : %i'%thisphase )
+        if verbose:
+            print( 'splicing tail onto template for day : %i'%thisphase )
 
         # get the median of all the low-z mangled SEDs that have data at
         # this phase and satisfy the x1 range requirements
         fluxlowzarray = []
-        for name in __LOWZLIST__:
-            lowzsn = modeldict[name.lower()]
+        for name in modeldict.keys():
+            if not name.startswith('sn'):
+                continue
+            lowzsn = modeldict[name]
 
             if lowzsn.mintime()>thisphase: continue
             if lowzsn.maxtime()<thisphase: continue
@@ -906,27 +947,37 @@ def extend_template0_ir(modeldict = None, x1min=-1, x1max=1,
     fout.writelines( outlines )
     fout.close()
 
-def plot_extended_template0():
+def plot_extended_template0(salt2dir = 'salt2-4', salt2irdir = 'salt2ir'):
+    """Plot the extended SALT2 template0 component at 5 phases"""
     pl.clf()
-    newtemp0 = TimeSeriesGrid('salt2ir/salt2_template_0.dat')
-    for phase, color in zip([-15,-5,0,5,25],['m','b','g','r','k']):
-        newtemp0.plot_at_phase(phase=phase, color=color, ls='-',
+    oldtemp0 = TimeSeriesGrid(os.path.join(salt2dir,'salt2_template_0.dat'))
+    newtemp0 = TimeSeriesGrid(os.path.join(salt2irdir,'salt2_template_0.dat'))
+    for phase, fluxoffset, color in zip([-10,-5,0,5,25],
+                                        [0.14, 0.09, 0.06, 0.03, 0.0],
+                                        ['m','b','g','r','k']):
+        oldtemp0.plot_at_phase(phase=phase, fluxoffset=fluxoffset,
+                               color=color, ls='-',
                                label='phase = %i'%int(phase))
-    pl.legend(loc='upper right')
-
-
+        newtemp0.plot_at_phase(phase=phase, fluxoffset=fluxoffset,
+                               color=color, ls='--',
+                               label='__nolabel__')
+    pl.legend(loc='upper right', ncol=2)
+    ax = pl.gca()
+    ax.set_xlim(5800, 15000)
+    ax.set_ylim(-0.01, 0.31)
+    pl.setp(ax.get_yticklabels(), visible=False)
+    ax.set_ylabel('SALT2 M0 value (arbitrary units)')
+    ax.set_xlabel(r'Wavelength ($\rm{\AA}$)')
 
 
 def extend_template1_ir(modeldict = None, cmin=-0.1, cmax=0.3,
                         x1min=-1, x1max=1,
                         modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
-                        salt2dir = 'salt2-4',
-                        salt2irdir = 'salt2ir',
+                        salt2dir = 'salt2-4', salt2irdir = 'salt2ir',
                         wavejoinstart = 8500, wavemax = 25000,
-                        wavesmoothwindow=100,
-                        timesmoothwindow=5,
-                        showphase0plots=False):
-    """ extend the M1 component of the SALT2 model into the IR.  (this is the
+                        wavesmoothwindow=100, timesmoothwindow=5,
+                        showplots=False, verbose=False):
+    """ extend the M1 component of the SALT2 model into the IR.  This is the
     component that is multiplied by the SALT2 parameter x1, and therefore
     reflects changes in the shape of the light curve.
 
@@ -943,13 +994,20 @@ def extend_template1_ir(modeldict = None, cmin=-0.1, cmax=0.3,
     medsmooth = lambda f, N : np.array([np.median(
         f[max(0,i-N):min(len(f),max(0,i-N)+2*N)]) for i in range(len(f))])
 
+    if showplots:
+        phaselist = [-5, 0, 5, 10, 25]
+
+        fig = pl.gcf()
+        fig.clf()
+        ax1 = pl.subplot2grid((len(phaselist), 2), (0,0), rowspan=len(phaselist))
+
     if modeldict == None:
         modeldict = load_sncosmo_models()
     salt2dir = os.path.join(modeldir, salt2dir)
     salt2irdir = os.path.join(modeldir, salt2irdir)
 
     # read in the extended template0 data (i.e. the M0 model
-    # component that has already been extended to IR wavelengths
+    # component that has already been extended to IR wavelengths)
     temp0extfile = os.path.join( salt2irdir, 'salt2_template_0.dat' )
     temp0ext = TimeSeriesGrid(temp0extfile)
 
@@ -966,7 +1024,7 @@ def extend_template1_ir(modeldict = None, cmin=-0.1, cmax=0.3,
     wavemin = wavelist_old[0]
     wavejoinend = wavelist_old[-1]
     wavelist_join = np.arange(wavejoinstart, wavejoinend+wavestep, wavestep)
-    wavelist_opt = np.arange(4000, 8000, wavestep)
+    wavelist_opt = np.arange(4500, 7000, wavestep)
     wavelist_ir = np.arange(wavejoinstart, wavemax, wavestep)
     wavelist_all = np.arange(wavemin, wavemax, wavestep)
 
@@ -976,13 +1034,14 @@ def extend_template1_ir(modeldict = None, cmin=-0.1, cmax=0.3,
     ijoinnew = np.where((wavelist_ir >= wavejoinstart) &
                         (wavelist_ir <= wavejoinend))[0]
 
-    assert (np.all(wavelist_all==temp0ext.wave[0]),
-            "New M1 wavelength array must match extended M0"
-            " wavelength array exactly.")
+    assert np.all(wavelist_all==temp0ext.wave[0])
+    #        "New M1 wavelength array must match extended M0"
+    #        " wavelength array exactly.")
 
-    assert (np.all(wavelist_all == np.append(wavelist_old, wavelist_ir)),
-            "New M1 wavelength array must match the join of old (optical)"
-            " and new (IR) wavelength arrays exactly.")
+    assert np.all(wavelist_all == np.append(wavelist_old[:ijoinold[0]],
+                                            wavelist_ir))
+    #        "New M1 wavelength array must match the join of old (optical)"
+    #        " and new (IR) wavelength arrays exactly.")
 
     # define weight functions to be applied when combining the new
     #  M1 curve with the old M1 curve.  It increases linearly from 0
@@ -1010,11 +1069,14 @@ def extend_template1_ir(modeldict = None, cmin=-0.1, cmax=0.3,
             temp1.wave[iphase1], temp1.value[iphase1],
             bounds_error=False, fill_value=0)
 
-        print( 'solving for IR tail of template_1 for day : %i'%thisphase )
+        if verbose:
+            print( 'solving for IR tail of template_1 for day : %i'%thisphase )
 
         M1extlist = []
-        for name in __LOWZLIST__:
-            lowzsn = modeldict[name.lower()]
+        for name in modeldict.keys():
+            if not name.startswith('sn'):
+                continue
+            lowzsn = modeldict[name]
 
             if lowzsn.mintime()>thisphase: continue
             if lowzsn.maxtime()<thisphase: continue
@@ -1026,12 +1088,30 @@ def extend_template1_ir(modeldict = None, cmin=-0.1, cmax=0.3,
             fluxlowz_opt = lowzsn.flux(thisphase, wavelist_opt)
             if np.sum(fluxlowz_opt)==0: continue
 
+            # load the original SALT2 colorlaw:
+            CL = load_salt2_colorlaw(salt2dir=salt2dir)
+
             # Solve for x0 as a function of lambda (should be ~constant!)
             # over optical wavelengths. Then define a scalar x0 as the
-            # median value over the  4000-8000 angstrom range
-            x0 = np.median((fluxlowz_opt /
-                            (M0func(wavelist_opt) +
-                             lowzsn.salt2x1 * M1func(wavelist_opt))))
+            # median value over the optical wavelength range
+            x0_vs_lambda = (fluxlowz_opt /
+                            ((M0func(wavelist_opt) +
+                             lowzsn.salt2x1 * M1func(wavelist_opt)) *
+                             np.exp(lowzsn.salt2c * CL(wavelist_opt))))
+            x0median = np.median(x0_vs_lambda)
+
+            if False:
+                pl.clf()
+                pl.plot(wavelist_opt, x0_vs_lambda)
+                ax = pl.gca()
+                ax.axhline(x0median, color='r', ls='-')
+                ax.text(0.95, 0.95, '%.3f'%lowzsn.salt2x0,
+                        ha='right', va='top', color='r', transform=ax.transAxes)
+                pl.show()
+                pl.draw()
+                raw_input("Showing x0 vs lambda for %s. Return to continue"%name)
+
+            x0 = x0median
 
             # solve for the M1 array over the NIR wavelength range (8500+ A)
             fluxlowz_ir = lowzsn.flux(thisphase, wavelist_ir)
@@ -1065,18 +1145,23 @@ def extend_template1_ir(modeldict = None, cmin=-0.1, cmax=0.3,
         if len(newM1values) != len(wavelist_all):
             import pdb; pdb.set_trace()
 
-        if showphase0plots and thisphase==0:
-            fig1 = pl.figure(1)
-            fig1.clf()
-            ax1 = fig1.gca()
+        if showplots and thisphase==0:
             for M1ext in M1extlist:
-                ax1.plot(wavelist_ir, M1ext, lw=2, alpha=0.3, color='c')
-            ax1.plot(wavelist_ir, newM1median, lw=2.5, color='0.5')
-            ax1.plot(wavelist_all, newM1values, lw=1, color='k')
-            ax1.plot(temp1.wave[0], M1func(temp1.wave[0]), color='r', lw=2.5)
+                ax1.plot(wavelist_ir, M1ext, lw=2, alpha=0.3, color='b',
+                         label='__nolabel__')
+            #ax1.plot(wavelist_ir, newM1median, lw=3.5, color='0.5',
+            #         label='median of IR templates')
+            ax1.plot(temp1.wave[0], M1func(temp1.wave[0]), color='0.5', lw=3.5,
+                     label='SALT2-4')
+            ax1.plot(wavelist_all, newM1values, lw=1.2, color='darkorange',
+                     label='SALT2-IR')
+            ax1.set_ylim(-0.035, 0.045)
+            ax1.set_xlim(2805, 18495)
+            ax1.set_xlabel(r'Wavelength ($\rm{\AA}$)')
+            ax1.set_ylabel('SALT2 M1 model component value')
+            pl.legend(loc='upper right')
 
     newM1grid = np.array(newM1grid)
-
     if timesmoothwindow:
         for iwave in range(len(wavelist_all)):
             newM1grid[:,iwave] = savitzky_golay(
@@ -1095,39 +1180,44 @@ def extend_template1_ir(modeldict = None, cmin=-0.1, cmax=0.3,
     fout = open( temp1fileOUT, 'w' )
     fout.writelines( outlines )
     fout.close()
-    return(newM1grid)
+
+    if showplots:
+        oldtemp1 = TimeSeriesGrid('salt2-4/salt2_template_1.dat')
+        newtemp1 = TimeSeriesGrid('salt2ir/salt2_template_1.dat')
+
+        iax = -1
+        for phase in phaselist:
+            if phase==0: continue
+            iax+=1
+            ax = pl.subplot2grid((len(phaselist)-1, 2), (iax, 1), sharex=ax1)
+            oldtemp1.plot_at_phase(phase=phase, color='0.5', ls='-', lw=2.5,
+                                   label='SALT2-4')
+            newtemp1.plot_at_phase(phase=phase, color='darkorange', ls='-', lw=1,
+                                   label='SALT2-IR')
+            ax.text(0.5,0.9, 'phase = % i'%int(phase), ha='left', va='top',
+                    fontsize='large', transform=ax.transAxes)
+
+            if phase==phaselist[-1]:
+                ax.set_xlabel(r'Wavelength ($\rm{\AA}$)')
+            else:
+                pl.setp(ax.get_xticklabels(), visible=False)
+            ax.yaxis.set_major_locator(ticker.MaxNLocator(3))
+            ax.yaxis.set_minor_locator(ticker.MaxNLocator(6))
+            ax.xaxis.set_major_locator(ticker.MaxNLocator(5))
+            ax.xaxis.set_minor_locator(ticker.MaxNLocator(10))
+            ax.set_xlim(2805, 17995)
+
+        ax1.xaxis.set_major_locator(ticker.MaxNLocator(5))
+        ax1.xaxis.set_minor_locator(ticker.MaxNLocator(10))
+
+        fig = pl.gcf()
+        fig.subplots_adjust(hspace=0, left=0.1, bottom=0.12, right=0.95)
+        pl.draw()
+    return
 
 
-def plot_extended_template1(phaselist=[-15,-5,0,5,25]):
-    fig = pl.gcf()
-    fig.clf()
-    oldtemp1 = TimeSeriesGrid('salt2-4/salt2_template_1.dat')
-    newtemp1 = TimeSeriesGrid('salt2ir/salt2_template_1.dat')
-    iax = 0
-    for phase in phaselist:
-        iax+=1
-        ax = fig.add_subplot(len(phaselist),1,iax)
-        oldtemp1.plot_at_phase(phase=phase, color='0.5', ls='-', lw=2.5,
-                               label='SALT2-4')
-        newtemp1.plot_at_phase(phase=phase, color='m', ls='-', lw=1,
-                               label='SALT2-IR')
-        ax.text(0.5,0.9, 'phase = % i'%int(phase), ha='left', va='top',
-                fontsize='large', transform=ax.transAxes)
-        if iax==1:
-            pl.legend(loc='upper right')
-        if iax<len(phaselist):
-            pl.setp(ax.get_xticklabels(), visible=False)
-        else:
-            ax.set_xlabel('Wavelength ($\AA$)')
-        if iax==int((len(phaselist)+1)/2.):
-            ax.set_ylabel('SALT2 M1 model component value')
-    fig.subplots_adjust(hspace=0, left=0.1, bottom=0.12, right=0.95)
-    pl.draw()
 
-
-
-
-def extendSALT2_flatline( wref=8500,
+def extend_dispersion_variance_covariance( wref=8500,
         modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
         salt2subdir='salt2-4', salt2irsubdir='salt2ir',
         showplots = False):
@@ -1144,13 +1234,14 @@ def extendSALT2_flatline( wref=8500,
                 'salt2_spec_covariance_01.dat',
                 'salt2_spec_variance_0.dat',
                 'salt2_spec_variance_1.dat']
+    titlelist = ['A', 'B', 'C', 'D', 'E', 'F', 'G']
 
     if showplots:
         fig = pl.gcf()
         fig.clf()
         iax=0
 
-    for filename in filelist:
+    for filename, title in zip(filelist, titlelist):
         infile = os.path.join(salt2modeldir, filename)
         outfile = os.path.join(salt2irmodeldir, filename)
         timeseries = TimeSeriesGrid(infile)
@@ -1170,25 +1261,34 @@ def extendSALT2_flatline( wref=8500,
         if showplots:
             iax+=1
             if iax==1:
-                ax = fig.add_subplot(7,1,iax)
-                ax1 = ax
+                ax1 = pl.subplot2grid((4,2), (iax-1,0))
+                ax = ax1
+            elif iax<=4:
+                ax = pl.subplot2grid((4,2), (iax-1,0))
             else:
-                ax = fig.add_subplot(7,1,iax, sharex=ax1)
-            timeseries.plot_at_phase(0, color='k', lw=2.5, ls='-', marker=' ')
+                ax = pl.subplot2grid((4,2), (iax-5,1))
+            timeseries.plot_at_phase(0, color='0.5', lw=3.2, ls='-', marker=' ')
             timeseriesNew = TimeSeriesGrid(outfile)
-            timeseriesNew.plot_at_phase(0, color='r', lw=1,
+            timeseriesNew.plot_at_phase(0, color='darkorange', lw=1,
                                         ls='--', marker=' ')
-            ax.text(0.95, 0.95, filename, transform=ax.transAxes,
+            ax.text(0.90, 0.9, title, transform=ax.transAxes,
                     fontsize='large', ha='right', va='top')
-            if iax==2:
-                ax.set_ylim(-1e-5,3.2e-5)
-            elif iax==3:
-                ax.set_ylim(-1e-4,6e-4)
-            elif iax==4:
-                ax.set_ylim(-5e-6,5e-4)
-            elif iax>3:
+            if iax==1:
+                ax.set_ylim(-0.2, 6)
+            elif iax in [2,3,4]:
+                ax.set_ylim(-5e-4,3e-3)
+            else:
                 ax.set_ylim(-5e-6,5e-5)
+            if iax!=4 and iax!=7:
+                pl.setp(ax.get_xticklabels(), visible=False)
+            pl.setp(ax.get_yticklabels(), visible=False)
             ax.set_xlim(2000,25000)
+            ax.xaxis.set_major_locator(ticker.MultipleLocator(10000))
+            ax.xaxis.set_minor_locator(ticker.MultipleLocator(2000))
+            ax.yaxis.set_major_locator(ticker.MaxNLocator(3))
+            ax.yaxis.set_minor_locator(ticker.MaxNLocator(6))
+            pl.subplots_adjust(hspace=0, wspace=0)
+
     # read in the salt2_color_correction.dat file
     # and repeat the fit parameters into the .INFO file:
     colorlawfile = os.path.join(salt2irmodeldir,
@@ -1237,12 +1337,30 @@ MAGERR_LAMOBS:  0.1  2000  4000  # magerr minlam maxlam
 MAGERR_LAMREST: 0.1   100   200  # magerr minlam maxlam
 """
 
+def load_salt2_colorlaw(salt2dir='salt2-4'):
+    """Read in the polynomial parameters for a salt2 color law and
+    return a callable function that provides the colorlaw value CL(l) 
+    for any input wavelength or wavelength array. """
+    clfilename = os.path.join(salt2dir,'salt2_color_correction.dat')
+    fin = open(clfilename, 'r')
+
+    nparam = int(fin.readline().strip())
+    params = []
+    for iline in range(nparam):
+        params.append(float(fin.readline().strip()))
+    version = int(fin.readline().split()[1])
+    rangemin = float(fin.readline().split()[1])
+    rangemax = float(fin.readline().split()[1])
+    cl = lambda w: salt2_colorlaw(w, params,
+                                  colorlaw_range=[rangemin, rangemax])
+    return cl
+
 
 def salt2_colorlaw(wave, params,
                    colorlaw_range=[2800,7000]):
     """Return the  extinction in magnitudes as a function of wavelength,
     for c=1. This is the version 1 extinction law used in SALT2 2.0
-    (SALT2-2-0).
+    (SALT2-2-0).  From S. Bailey's "salt2" github. 
 
     Notes
     -----
@@ -1317,31 +1435,38 @@ def fit_salt2colorlaw_to_ccm(c=0.1, Rv=3.1,
         # To first order (and for Rv=3.1) we can use: E(B-V) = c
         EBV = c
 
-    # define a wavelength grid that extends from the red end of the SALT2
-    # color law range out to
-    # wave = np.append(np.arange(wmin, wjoin, 10.0), np.arange(wjoin,wmax,100.0))
-    wave = np.arange(wmin, wmax, 10.0)
+    # Load some functions for computing the CCM extinction law
     alambda = lambda w: ccm_extinction(w, EBV, Rv)
     aB = ccm_extinction(_B_WAVELENGTH, EBV, Rv)
 
-    def fitting_function(w, param0, param1, param2, param3):
-        params = [param0, param1, param2, param3]
-        return c * salt2_colorlaw(
-            w, params, colorlaw_range=salt2_colorlaw_range)
+    # define a wavelength grid that extends from the blue end of the SALT2
+    # color law range out to the extreme red end that we are extrapolating to
+    wave = np.append(np.arange(salt2_colorlaw_range[0], salt2_colorlaw_range[1], 1.0),
+                     np.arange(salt2_colorlaw_range[1], wmax, 100.0))
 
-    paramA = [-0.504294, 0.787691, -0.461715, 0.0815619]
-    extinctioncurvetofit = np.where(wave < wjoin,
-                                    c * salt2_colorlaw(wave, paramA),
-                                    alambda(wave) - aB)
-    fitres = scopt.curve_fit( fitting_function, wave,
-                              extinctioncurvetofit, paramA)
-    paramfit = fitres[0]
+    # The color-law parameters for SALT2-4:
+    param0 = [-0.504294, 0.787691, -0.461715, 0.0815619]
+
+    # First-guess parameters for the new fit:
+    paramA = np.array([-0.5, 0.8, -0.5, 0.1])
+
+    def chi2_function(params, w):
+        salt2ext = c * salt2_colorlaw(
+            w, params, colorlaw_range=salt2_colorlaw_range)
+        ccmext = np.where(
+            w < wjoin, c * salt2_colorlaw(w, param0), alambda(w) - aB)
+        chi2 = (salt2ext-ccmext)**2
+        return np.sum(chi2)
+
+    fitres = scopt.minimize( chi2_function, paramA, args=(wave,),
+                             method='Nelder-Mead')
+    paramfit = fitres['x']
 
     if showfit:
         pl.clf()
-        salt2colorlaw0 = salt2_colorlaw(wave, params=paramA[:4],
+        salt2colorlaw0 = salt2_colorlaw(wave, params=param0[:4],
                                         colorlaw_range=[2800,7000])
-        salt2colorlawfit = salt2_colorlaw(wave, params=paramfit[:4],
+        salt2colorlawfit = salt2_colorlaw(wave, params=paramfit,
                                           colorlaw_range=salt2_colorlaw_range)
 
         pl.plot(wave, c * salt2colorlaw0, 'k-', label='SALT2-4 color law')
@@ -1349,26 +1474,26 @@ def fit_salt2colorlaw_to_ccm(c=0.1, Rv=3.1,
         pl.plot(wave, alambda(wave) - aB, 'b-.', label='Dust with Rv=3.1')
         ax = pl.gca()
         ax.set_xlim(3000,20000)
-        ax.set_ylim(-0.5,0.1)
+        ax.set_ylim(-0.45,0.25)
 
-        ax.text(0.95, 0.55,
+        ax.text(0.95, 0.6,
                 'SALT2-4 colorlaw range = [%i, %i]'%tuple([2800,7000]),
                 ha='right', va='bottom', transform=ax.transAxes, color='k')
-        ax.text(0.95, 0.45,
+        ax.text(0.95, 0.5,
                 ('SALT2-4 colorlaw parameters =\n'
-                '[%.3f, %.3f, %.3f, %.3f]'%tuple(paramA)),
-                ha='right', va='bottom', transform=ax.transAxes, color='k')
+                 '[%.3f, %.3f, %.3f, %.3f]'%tuple(param0)),
+                 ha='right', va='bottom', transform=ax.transAxes, color='k')
 
-        ax.text(0.05, 0.15,
-                '$\lambda_{\\rm join}$= %i'%wjoin,
-                ha='left', va='bottom', transform=ax.transAxes, color='r')
-        ax.text(0.05, 0.1,
+        ax.text(0.95, 0.35,
                 'SALT2ir colorlaw range = [%i, %i]'%tuple(salt2_colorlaw_range),
-                ha='left', va='bottom', transform=ax.transAxes, color='r')
-        ax.text(0.05, 0.05,
-                ('SALT2ir colorlaw parameters ='
+                ha='right', va='bottom', transform=ax.transAxes, color='r')
+        ax.text(0.95, 0.25,
+                ('SALT2ir colorlaw parameters =\n'
                 '[%.3f, %.3f, %.3f, %.3f]'%tuple(paramfit)),
-                ha='left', va='bottom', transform=ax.transAxes, color='r')
+                ha='right', va='bottom', transform=ax.transAxes, color='r')
+        #ax.text(0.95, 0.2,
+        #        '$\lambda_{\\rm join}$= %i'%wjoin,
+        #        ha='right', va='bottom', transform=ax.transAxes, color='r')
         ax.legend(loc='upper right')
         ax.set_xlabel('Wavelength ($\AA$)')
         ax.set_ylabel('A$_{\lambda}$ - A$_{B}$  or  c$\\times$ CL($\lambda$)')
@@ -1425,7 +1550,7 @@ def mk_salt2ir_template0_plots():
 
 
 def plot_salt2_component_timeseries(
-        component=0, wavemin=11000, wavemax=14000,
+        component=0, wavemin=10000, wavemax=20000,
         modeldir='/Users/rodney/Dropbox/WFIRST/SALT2IR',
         salt2dir = 'salt2-4', salt2irdir = 'salt2ir',
         **kwargs):
@@ -1442,7 +1567,7 @@ def plot_salt2_component_timeseries(
 
     wavelist = np.linspace(wavemin, wavemax, 5)
     for wave in wavelist:
-        phaselist = range(-5,10)
+        phaselist = np.arange(-5,25,1)
         iwave = np.argmin(np.abs(valuegrid.wave[0]-wave))
         iphaselist = np.array([np.where(valuegrid.phase == phase)[0][0]
                                for phase in phaselist])
@@ -1452,6 +1577,7 @@ def plot_salt2_component_timeseries(
     ax.set_xlabel('time (days)')
     ax.set_ylabel('SALT2 model component M%i value' % component)
     ax.legend(loc='best', ncol=2)
+
 
 
 def savitzky_golay(y, window_size=5, order=3, deriv=0):
