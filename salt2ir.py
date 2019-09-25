@@ -407,7 +407,7 @@ def get_mlcs_to_salt2_parameter_conversion_functions(
 
         if snname_stripped not in salt2fitdata['CID']:
             if verbose:
-                print "missing %s in salt2 fit data. Skipping" % snname_stripped
+                print("missing %s in salt2 fit data. Skipping" % snname_stripped)
             continue
 
         isalt2 = np.where(salt2fitdata['CID']==snname_stripped)[0]
